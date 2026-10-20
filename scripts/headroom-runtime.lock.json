@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "repository": "pedr0v/headroom",
+  "gitUrl": "https://github.com/pedr0v/headroom.git",
+  "commit": "1dc3f3a0c0f39a2965c9c9c70c10768c8591fb9f",
+  "packageVersion": "0.34.0",
+  "sourceVersion": "0.35.0-dev",
+  "runtimeVersion": "0.35.0-dev+halv.g1dc3f3a0c0f3",
+  "uvLockSha256": "09f9a83eaff49c2965bb318a2fa8511bdee381da31818debbc93cc6f21848c7c",
+  "pythonVersion": "3.12.7",
+  "pyinstallerVersion": "6.21.0",
+  "uvVersion": "0.11.28",
+  "artifactFormat": "pyinstaller-onedir-v1"
+}

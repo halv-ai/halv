@@ -1,0 +1,71 @@
+name: Remote
+
+# Checks of the halv-remote crate for the mobile remote control (ADR 0009, docs/remote-protocol.md).
+# The relay and the phone app are not in this repository.
+
+on:
+  pull_request:
+    paths:
+      - "crates/halv-remote/**"
+      - "src-tauri/src/remote/**"
+      - ".github/workflows/remote.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/halv-remote/**"
+      - "src-tauri/src/remote/**"
+      - ".github/workflows/remote.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: halv-remote-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  crate:
+    name: halv-remote crate
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: crates/halv-remote
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            crates/halv-remote/target
+          key: ${{ runner.os }}-remote-crate-${{ hashFiles('crates/halv-remote/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-remote-crate-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # The default feature set is the pure core that the phone builds for iOS and Android.
+      - name: Lint the default features
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Lint all features
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      # Without HALV_RELAY_E2E_URL, the tests in tests/e2e_relay.rs pass as skipped.
+      - name: Run tests
+        run: cargo test --locked --all-features

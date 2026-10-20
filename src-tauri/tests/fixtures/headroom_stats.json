@@ -1,0 +1,2912 @@
+{
+  "summary": {
+    "mode": "token",
+    "api_requests": 363,
+    "primary_model": "claude-fable-5",
+    "compression": {
+      "requests_compressed": 147,
+      "avg_compression_pct": 2.6,
+      "best_compression_pct": 13,
+      "best_detail": "54,124 → 47,096 tokens",
+      "total_tokens_removed": 359846,
+      "cli_filtering_tokens_avoided": 0,
+      "total_tokens_saved_with_cli_filtering": 359846,
+      "total_tokens_before_with_cli_filtering": 23365953,
+      "rtk_tokens_avoided": 0,
+      "total_tokens_saved_with_rtk": 359846,
+      "total_tokens_before_with_rtk": 23365953
+    },
+    "uncompressed_requests": {
+      "prefix_frozen": 11,
+      "no_compressible_content": 205
+    },
+    "cost": {
+      "without_headroom_usd": 69.28,
+      "with_headroom_usd": 65.69,
+      "total_saved_usd": 3.6,
+      "savings_pct": 5.2,
+      "breakdown": {
+        "cache_savings_usd": 393.19,
+        "compression_savings_usd": 3.6,
+        "cli_filtering_savings_usd": null,
+        "cli_filtering_savings_note": "CLI filtering tokens are included in token savings only; dollar savings use proxy compression tokens at model list price.",
+        "rtk_savings_usd": null,
+        "rtk_savings_note": "CLI filtering tokens are included in token savings only; dollar savings use proxy compression tokens at model list price."
+      }
+    },
+    "mcp": {
+      "compressions": 0,
+      "tokens_removed": 0,
+      "retrievals": 0
+    }
+  },
+  "agent_usage": {
+    "agents": [
+      {
+        "agent": "codex",
+        "label": "Codex",
+        "source": "client",
+        "requests": 12,
+        "before_tokens": 900000,
+        "after_tokens": 876000,
+        "output_tokens": 12000,
+        "tokens_saved": 24000,
+        "models": {
+          "gpt-5.5": 12
+        },
+        "providers": {
+          "openai": 12
+        },
+        "has_exact_tokens": true,
+        "savings_percent": 2.67,
+        "after_percent": 97.33,
+        "share_of_saved_percent": 1.26,
+        "share_of_requests_percent": 3.2
+      },
+      {
+        "agent": "claude-code",
+        "label": "Claude",
+        "source": "client",
+        "requests": 363,
+        "before_tokens": 23365953,
+        "after_tokens": 21485953,
+        "output_tokens": 385653,
+        "tokens_saved": 1880000,
+        "models": {
+          "claude-fable-5": 344,
+          "claude-opus-4-8": 19
+        },
+        "providers": {
+          "anthropic": 363
+        },
+        "has_exact_tokens": true,
+        "savings_percent": 8.05,
+        "after_percent": 91.95,
+        "share_of_saved_percent": 98.74,
+        "share_of_requests_percent": 96.8
+      }
+    ],
+    "totals": {
+      "requests": 375,
+      "before_tokens": 24265953,
+      "after_tokens": 22361953,
+      "output_tokens": 397653,
+      "tokens_saved": 1904000,
+      "savings_percent": 7.85
+    },
+    "coverage": {
+      "logged_requests": 375,
+      "exact_token_rows": 2,
+      "mode": "request_logs"
+    }
+  },
+  "savings": {
+    "total_tokens": 359846,
+    "per_project": {
+      "demo-app": {
+        "requests": 154,
+        "tokens_saved": 0,
+        "compression_savings_usd": 0,
+        "total_input_tokens": 39668584,
+        "total_input_cost_usd": 10.128466,
+        "last_activity_at": "2026-07-01T19:56:56Z",
+        "savings_percent": 0
+      },
+      "demo-site": {
+        "requests": 5,
+        "tokens_saved": 0,
+        "compression_savings_usd": 0,
+        "total_input_tokens": 108964,
+        "total_input_cost_usd": 0.654851,
+        "last_activity_at": "2026-07-01T20:54:13Z",
+        "savings_percent": 0
+      }
+    },
+    "by_layer": {
+      "cli_filtering": {
+        "tool": "rtk",
+        "label": "RTK",
+        "tokens": 0,
+        "tokens_saved": 0,
+        "session": {
+          "commands": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "tokens_saved": 0,
+          "savings_pct": null,
+          "total_time_ms": 0,
+          "avg_time_ms": null
+        },
+        "lifetime": {
+          "commands": 0,
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "tokens_saved": 0,
+          "savings_pct": 0,
+          "total_time_ms": 0
+        },
+        "session_savings_pct": null,
+        "lifetime_savings_pct": 0,
+        "refresh_interval_seconds": 60,
+        "included_in": "tokens.saved",
+        "description": "Tokens avoided by CLI output filtering (RTK) before reaching context. Included in dashboard token savings, but not in dollar savings."
+      },
+      "compression": {
+        "tokens": 359846,
+        "proxy_tokens": 359846,
+        "cli_filtering_tokens": 0,
+        "rtk_tokens": 0,
+        "lean_ctx_tokens": 0,
+        "all_layers_tokens": 359846,
+        "description": "Tokens removed by Headroom proxy compression. Dashboard token savings also includes CLI context-tool filtering."
+      },
+      "prefix_cache": {
+        "discount_usd": 393.1936,
+        "description": "Cost discount from provider prefix caching. Headroom's CacheAligner improves hit rates; baseline caching is provider-native."
+      },
+      "output_shaping": {
+        "available": false,
+        "description": "OUTPUT tokens the model didn't emit because the shaper steered verbosity / routed effort down. Counterfactual — shown as an estimate (vs a learned baseline) or measured (A/B holdout), always with a confidence band."
+      }
+    }
+  },
+  "requests": {
+    "total": 363,
+    "cached": 355,
+    "rate_limited": 0,
+    "failed": 0,
+    "by_provider": {
+      "anthropic": 363
+    },
+    "by_model": {
+      "claude-fable-5": 344,
+      "claude-opus-4-8": 19
+    },
+    "by_stack": {}
+  },
+  "tokens": {
+    "input": 23006107,
+    "output": 385653,
+    "output_saved": 0,
+    "output_reduction_percent": 0,
+    "output_reduction": {
+      "available": false
+    },
+    "saved": 359846,
+    "proxy_compression_saved": 359846,
+    "cli_filtering_saved": 0,
+    "rtk_saved": 0,
+    "lean_ctx_saved": 0,
+    "cli_tokens_avoided": 0,
+    "proxy_total_before_compression": 23365953,
+    "total_before_compression": 23365953,
+    "all_layers_saved": 359846,
+    "proxy_attempted_tokens": 23365953,
+    "active_savings_percent": 1.54,
+    "proxy_savings_percent": 1.54,
+    "savings_percent": 1.54,
+    "all_layers_savings_percent": 1.54
+  },
+  "latency": {
+    "average_ms": 16017.84,
+    "min_ms": 2767.42,
+    "max_ms": 299725.98,
+    "total_requests": 363
+  },
+  "overhead": {
+    "average_ms": 282.28,
+    "min_ms": 2.07,
+    "max_ms": 3671.65
+  },
+  "ttfb": {
+    "average_ms": 3855.73,
+    "min_ms": 1290.06,
+    "max_ms": 14984.08
+  },
+  "pipeline_timing": {
+    "_deep_copy": {
+      "average_ms": 0.58,
+      "max_ms": 8.07,
+      "count": 363
+    },
+    "_final_token_count": {
+      "average_ms": 20.27,
+      "max_ms": 199.13,
+      "count": 363
+    },
+    "_initial_token_count": {
+      "average_ms": 21.11,
+      "max_ms": 156.65,
+      "count": 363
+    },
+    "compressor:html": {
+      "average_ms": 2895.26,
+      "max_ms": 2895.26,
+      "count": 1
+    },
+    "compressor:kompress": {
+      "average_ms": 72.63,
+      "max_ms": 760.4,
+      "count": 62
+    },
+    "compressor:log": {
+      "average_ms": 25.28,
+      "max_ms": 116.22,
+      "count": 7
+    },
+    "compressor:mixed": {
+      "average_ms": 229.37,
+      "max_ms": 967.97,
+      "count": 13
+    },
+    "compressor:search": {
+      "average_ms": 112.96,
+      "max_ms": 432.27,
+      "count": 4
+    },
+    "compressor:smart_crusher": {
+      "average_ms": 473.86,
+      "max_ms": 473.86,
+      "count": 1
+    },
+    "compressor:tabular": {
+      "average_ms": 134.08,
+      "max_ms": 427.24,
+      "count": 8
+    },
+    "compressor:text": {
+      "average_ms": 189.18,
+      "max_ms": 1256.06,
+      "count": 33
+    },
+    "content_router": {
+      "average_ms": 215.78,
+      "max_ms": 3082.58,
+      "count": 363
+    },
+    "pipeline_total": {
+      "average_ms": 236.39,
+      "max_ms": 3140.62,
+      "count": 363
+    }
+  },
+  "compressions_by_strategy": {
+    "text": 116,
+    "code_aware": 22,
+    "log": 9,
+    "kompress": 88,
+    "search": 7,
+    "smart_crusher": 27,
+    "tabular": 8,
+    "html": 1
+  },
+  "tokens_saved_by_strategy": {
+    "log": 342,
+    "search": 13,
+    "smart_crusher": 1806,
+    "html": 27
+  },
+  "codex_ws": {
+    "units_total": 0,
+    "units_modified_total": 0,
+    "units_by_strategy": {},
+    "units_by_category": {},
+    "units_by_content_type": {},
+    "units_by_text_shape": {},
+    "units_to_kompress_total": 0,
+    "units_kompress_attempted_total": 0,
+    "units_to_kompress_percent": 0,
+    "units_kompress_attempted_percent": 0,
+    "unit_elapsed_ms": {
+      "average": 0,
+      "max": 0
+    },
+    "unit_bytes_sum": 0,
+    "unit_tokens_before_sum": 0,
+    "unit_tokens_after_sum": 0,
+    "unit_tokens_saved_sum": 0,
+    "frames_attempted_total": 0,
+    "frames_compressed_total": 0,
+    "frames_failed_total": 0,
+    "frames_to_kompress_total": 0,
+    "frames_kompress_attempted_total": 0,
+    "frames_to_kompress_percent": 0,
+    "frames_kompress_attempted_percent": 0,
+    "frame_elapsed_ms": {
+      "average": 0,
+      "max": 0
+    },
+    "frame_bytes_before_sum": 0,
+    "frame_bytes_after_sum": 0,
+    "frame_attempted_tokens_sum": 0,
+    "frame_tokens_saved_sum": 0
+  },
+  "waste_signals": {},
+  "router": {
+    "route_counts": {
+      "excluded_tool": 1616,
+      "small": 9287,
+      "ratio_too_high": 2731,
+      "content_blocks": 23013,
+      "system_msg": 2048,
+      "cache_miss": 191,
+      "error_protected": 1375,
+      "cache_control_protected": 417,
+      "cache_hit": 2588,
+      "already_compressed": 91,
+      "user_msg": 3
+    }
+  },
+  "savings_history": [
+    [
+      "2026-07-01T18:28:44.659524",
+      120642
+    ],
+    [
+      "2026-07-01T18:28:52.755946",
+      120642
+    ],
+    [
+      "2026-07-01T18:29:07.714614",
+      120642
+    ],
+    [
+      "2026-07-01T18:29:25.230563",
+      120642
+    ],
+    [
+      "2026-07-01T18:29:33.732167",
+      120642
+    ],
+    [
+      "2026-07-01T18:29:55.112454",
+      120642
+    ],
+    [
+      "2026-07-01T18:30:02.450363",
+      120642
+    ],
+    [
+      "2026-07-01T18:30:12.805186",
+      120642
+    ],
+    [
+      "2026-07-01T18:30:21.543522",
+      120642
+    ],
+    [
+      "2026-07-01T18:30:41.144970",
+      120642
+    ],
+    [
+      "2026-07-01T18:30:52.463377",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:06.116337",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:20.836941",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:31.156592",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:38.270321",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:49.925260",
+      120642
+    ],
+    [
+      "2026-07-01T18:31:59.521097",
+      120642
+    ],
+    [
+      "2026-07-01T18:32:14.012530",
+      120642
+    ],
+    [
+      "2026-07-01T18:32:33.804620",
+      120642
+    ],
+    [
+      "2026-07-01T18:32:41.385256",
+      120642
+    ],
+    [
+      "2026-07-01T18:32:52.741363",
+      120642
+    ],
+    [
+      "2026-07-01T18:32:59.097984",
+      120642
+    ],
+    [
+      "2026-07-01T18:33:10.563545",
+      120642
+    ],
+    [
+      "2026-07-01T18:33:16.479523",
+      120865
+    ],
+    [
+      "2026-07-01T18:33:28.048809",
+      120865
+    ],
+    [
+      "2026-07-01T18:33:57.772626",
+      120865
+    ],
+    [
+      "2026-07-01T18:34:06.233496",
+      120865
+    ],
+    [
+      "2026-07-01T18:34:22.239900",
+      120865
+    ],
+    [
+      "2026-07-01T18:35:12.204020",
+      120865
+    ],
+    [
+      "2026-07-01T18:35:23.565208",
+      120865
+    ],
+    [
+      "2026-07-01T18:35:30.123886",
+      120865
+    ],
+    [
+      "2026-07-01T18:35:35.649067",
+      120865
+    ],
+    [
+      "2026-07-01T18:35:38.833591",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:01.697664",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:07.264863",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:12.143629",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:23.878611",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:27.941462",
+      122109
+    ],
+    [
+      "2026-07-01T18:36:34.161956",
+      122109
+    ],
+    [
+      "2026-07-01T18:37:26.399023",
+      122109
+    ],
+    [
+      "2026-07-01T18:37:34.388244",
+      122109
+    ],
+    [
+      "2026-07-01T18:37:42.188110",
+      122109
+    ],
+    [
+      "2026-07-01T18:37:47.955785",
+      122109
+    ],
+    [
+      "2026-07-01T18:37:53.552686",
+      122109
+    ],
+    [
+      "2026-07-01T18:38:11.608361",
+      122109
+    ],
+    [
+      "2026-07-01T18:38:18.326392",
+      122109
+    ],
+    [
+      "2026-07-01T18:38:30.158879",
+      122109
+    ],
+    [
+      "2026-07-01T18:39:03.964048",
+      122109
+    ],
+    [
+      "2026-07-01T18:39:09.441123",
+      122109
+    ],
+    [
+      "2026-07-01T18:39:53.964675",
+      122109
+    ],
+    [
+      "2026-07-01T18:40:01.943122",
+      125941
+    ],
+    [
+      "2026-07-01T18:40:17.341634",
+      129773
+    ],
+    [
+      "2026-07-01T18:40:35.675511",
+      133605
+    ],
+    [
+      "2026-07-01T18:40:46.216611",
+      137437
+    ],
+    [
+      "2026-07-01T18:40:52.409968",
+      141269
+    ],
+    [
+      "2026-07-01T18:41:13.318505",
+      145101
+    ],
+    [
+      "2026-07-01T18:41:18.570191",
+      148933
+    ],
+    [
+      "2026-07-01T18:41:25.016928",
+      152765
+    ],
+    [
+      "2026-07-01T18:41:56.742849",
+      156597
+    ],
+    [
+      "2026-07-01T18:42:26.653556",
+      157841
+    ],
+    [
+      "2026-07-01T18:42:36.189714",
+      163013
+    ],
+    [
+      "2026-07-01T18:42:47.149428",
+      168185
+    ],
+    [
+      "2026-07-01T18:42:53.185140",
+      173357
+    ],
+    [
+      "2026-07-01T18:43:02.803354",
+      178529
+    ],
+    [
+      "2026-07-01T18:43:18.680322",
+      183701
+    ],
+    [
+      "2026-07-01T18:43:49.937735",
+      188873
+    ],
+    [
+      "2026-07-01T18:44:05.316800",
+      194054
+    ],
+    [
+      "2026-07-01T18:44:14.259368",
+      199235
+    ],
+    [
+      "2026-07-01T18:44:36.407456",
+      204416
+    ],
+    [
+      "2026-07-01T18:44:43.843003",
+      209597
+    ],
+    [
+      "2026-07-01T18:44:55.067012",
+      214778
+    ],
+    [
+      "2026-07-01T18:45:03.025962",
+      219959
+    ],
+    [
+      "2026-07-01T18:45:14.327060",
+      225140
+    ],
+    [
+      "2026-07-01T18:45:22.614291",
+      230321
+    ],
+    [
+      "2026-07-01T18:49:47.711743",
+      235502
+    ],
+    [
+      "2026-07-01T18:49:55.383655",
+      240683
+    ],
+    [
+      "2026-07-01T18:50:26.296645",
+      245864
+    ],
+    [
+      "2026-07-01T18:50:47.164913",
+      251045
+    ],
+    [
+      "2026-07-01T18:51:26.728378",
+      256226
+    ],
+    [
+      "2026-07-01T18:52:09.102331",
+      261407
+    ],
+    [
+      "2026-07-01T18:52:32.956465",
+      266588
+    ],
+    [
+      "2026-07-01T18:53:11.080668",
+      271769
+    ],
+    [
+      "2026-07-01T18:53:24.512067",
+      276950
+    ],
+    [
+      "2026-07-01T18:53:30.077137",
+      282131
+    ],
+    [
+      "2026-07-01T18:55:27.824088",
+      287312
+    ],
+    [
+      "2026-07-01T18:56:11.077403",
+      292493
+    ],
+    [
+      "2026-07-01T19:01:47.398906",
+      297674
+    ],
+    [
+      "2026-07-01T19:02:54.575121",
+      302855
+    ],
+    [
+      "2026-07-01T19:03:58.270265",
+      308036
+    ],
+    [
+      "2026-07-01T19:04:24.655296",
+      313217
+    ],
+    [
+      "2026-07-01T19:04:33.014466",
+      318398
+    ],
+    [
+      "2026-07-01T19:04:38.299365",
+      323579
+    ],
+    [
+      "2026-07-01T19:04:43.231882",
+      328760
+    ],
+    [
+      "2026-07-01T19:04:53.387435",
+      333941
+    ],
+    [
+      "2026-07-01T19:05:10.067338",
+      339122
+    ],
+    [
+      "2026-07-01T19:05:19.342738",
+      344303
+    ],
+    [
+      "2026-07-01T19:05:42.024214",
+      349484
+    ],
+    [
+      "2026-07-01T19:06:07.413501",
+      354665
+    ],
+    [
+      "2026-07-01T19:06:17.586728",
+      354665
+    ],
+    [
+      "2026-07-01T19:06:25.452553",
+      359846
+    ]
+  ],
+  "display_session": {
+    "requests": 508,
+    "tokens_saved": 464887,
+    "compression_savings_usd": 4.386785,
+    "total_input_tokens": 32049900,
+    "total_input_cost_usd": 90.862967,
+    "savings_percent": 1.43,
+    "started_at": "2026-07-01T19:50:46Z",
+    "last_activity_at": "2026-07-01T22:06:25Z"
+  },
+  "litellm_available": true,
+  "persistent_savings": {
+    "schema_version": 3,
+    "storage_path": "/Users/demo/.headroom/proxy_savings.json",
+    "lifetime": {
+      "requests": 653,
+      "tokens_saved": 464887,
+      "compression_savings_usd": 4.386785,
+      "total_input_tokens": 71084772,
+      "total_input_cost_usd": 99.731581
+    },
+    "display_session": {
+      "requests": 508,
+      "tokens_saved": 464887,
+      "compression_savings_usd": 4.386785,
+      "total_input_tokens": 32049900,
+      "total_input_cost_usd": 90.862967,
+      "savings_percent": 1.43,
+      "started_at": "2026-07-01T19:50:46Z",
+      "last_activity_at": "2026-07-01T22:06:25Z"
+    },
+    "display_session_policy": {
+      "rollover_inactivity_minutes": 60
+    },
+    "history_points": 233,
+    "recent_history": [
+      {
+        "timestamp": "2026-07-01T21:52:09Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 366448,
+        "compression_savings_usd": 3.402395,
+        "total_input_tokens": 67304500,
+        "total_input_cost_usd": 93.313452
+      },
+      {
+        "timestamp": "2026-07-01T21:52:32Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 371629,
+        "compression_savings_usd": 3.454205,
+        "total_input_tokens": 67497213,
+        "total_input_cost_usd": 93.641604
+      },
+      {
+        "timestamp": "2026-07-01T21:53:11Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 376810,
+        "compression_savings_usd": 3.506015,
+        "total_input_tokens": 67691322,
+        "total_input_cost_usd": 93.974052
+      },
+      {
+        "timestamp": "2026-07-01T21:53:24Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 381991,
+        "compression_savings_usd": 3.557825,
+        "total_input_tokens": 67887452,
+        "total_input_cost_usd": 94.326986
+      },
+      {
+        "timestamp": "2026-07-01T21:53:30Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 387172,
+        "compression_savings_usd": 3.609635,
+        "total_input_tokens": 68084248,
+        "total_input_cost_usd": 94.664845
+      },
+      {
+        "timestamp": "2026-07-01T21:55:27Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 392353,
+        "compression_savings_usd": 3.661445,
+        "total_input_tokens": 68281186,
+        "total_input_cost_usd": 94.992524
+      },
+      {
+        "timestamp": "2026-07-01T21:56:11Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 397534,
+        "compression_savings_usd": 3.713255,
+        "total_input_tokens": 68478253,
+        "total_input_cost_usd": 95.319872
+      },
+      {
+        "timestamp": "2026-07-01T22:01:47Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 402715,
+        "compression_savings_usd": 3.765065,
+        "total_input_tokens": 68675582,
+        "total_input_cost_usd": 95.650599
+      },
+      {
+        "timestamp": "2026-07-01T22:02:54Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 407896,
+        "compression_savings_usd": 3.816875,
+        "total_input_tokens": 68873350,
+        "total_input_cost_usd": 95.983255
+      },
+      {
+        "timestamp": "2026-07-01T22:03:58Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 413077,
+        "compression_savings_usd": 3.868685,
+        "total_input_tokens": 69072289,
+        "total_input_cost_usd": 96.320965
+      },
+      {
+        "timestamp": "2026-07-01T22:04:24Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 418258,
+        "compression_savings_usd": 3.920495,
+        "total_input_tokens": 69271978,
+        "total_input_cost_usd": 96.667345
+      },
+      {
+        "timestamp": "2026-07-01T22:04:33Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 423439,
+        "compression_savings_usd": 3.972305,
+        "total_input_tokens": 69472133,
+        "total_input_cost_usd": 97.004835
+      },
+      {
+        "timestamp": "2026-07-01T22:04:38Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 428620,
+        "compression_savings_usd": 4.024115,
+        "total_input_tokens": 69672402,
+        "total_input_cost_usd": 97.340522
+      },
+      {
+        "timestamp": "2026-07-01T22:04:43Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 433801,
+        "compression_savings_usd": 4.075925,
+        "total_input_tokens": 69872866,
+        "total_input_cost_usd": 97.674126
+      },
+      {
+        "timestamp": "2026-07-01T22:04:53Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 438982,
+        "compression_savings_usd": 4.127735,
+        "total_input_tokens": 70073573,
+        "total_input_cost_usd": 98.009685
+      },
+      {
+        "timestamp": "2026-07-01T22:05:10Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 444163,
+        "compression_savings_usd": 4.179545,
+        "total_input_tokens": 70274603,
+        "total_input_cost_usd": 98.344679
+      },
+      {
+        "timestamp": "2026-07-01T22:05:19Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 449344,
+        "compression_savings_usd": 4.231355,
+        "total_input_tokens": 70475805,
+        "total_input_cost_usd": 98.679274
+      },
+      {
+        "timestamp": "2026-07-01T22:05:42Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 454525,
+        "compression_savings_usd": 4.283165,
+        "total_input_tokens": 70677203,
+        "total_input_cost_usd": 99.01442
+      },
+      {
+        "timestamp": "2026-07-01T22:06:07Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 459706,
+        "compression_savings_usd": 4.334975,
+        "total_input_tokens": 70879902,
+        "total_input_cost_usd": 99.361935
+      },
+      {
+        "timestamp": "2026-07-01T22:06:25Z",
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "total_tokens_saved": 464887,
+        "compression_savings_usd": 4.386785,
+        "total_input_tokens": 71084772,
+        "total_input_cost_usd": 99.731581
+      }
+    ],
+    "retention": {
+      "max_history_points": 5000,
+      "max_history_age_days": 365,
+      "max_response_history_points": 500
+    },
+    "projects": {
+      "demo-app": {
+        "requests": 154,
+        "tokens_saved": 0,
+        "compression_savings_usd": 0,
+        "total_input_tokens": 39668584,
+        "total_input_cost_usd": 10.128466,
+        "last_activity_at": "2026-07-01T19:56:56Z",
+        "savings_percent": 0
+      },
+      "demo-site": {
+        "requests": 5,
+        "tokens_saved": 0,
+        "compression_savings_usd": 0,
+        "total_input_tokens": 108964,
+        "total_input_cost_usd": 0.654851,
+        "last_activity_at": "2026-07-01T20:54:13Z",
+        "savings_percent": 0
+      }
+    },
+    "projects_limit": 50
+  },
+  "prefix_cache": {
+    "by_provider": {
+      "anthropic": {
+        "cache_read_tokens": 43688179,
+        "cache_write_tokens": 1860570,
+        "cache_write_5m_tokens": 1282776,
+        "cache_write_1h_tokens": 577794,
+        "cache_write_5m_requests": 291,
+        "cache_write_1h_requests": 69,
+        "uncached_input_tokens": 29909,
+        "requests": 361,
+        "hit_requests": 355,
+        "hit_rate": 95.9,
+        "request_hit_rate": 98.3,
+        "bust_count": 9,
+        "bust_write_tokens": 716751,
+        "read_discount": "90%",
+        "write_premium": "25%",
+        "savings_usd": 393.1936,
+        "write_premium_usd": 4.6514,
+        "net_savings_usd": 393.1936,
+        "label": "Explicit breakpoints, 5-min TTL",
+        "observed_ttl_buckets": {
+          "5m": {
+            "tokens": 1282776,
+            "requests": 291
+          },
+          "1h": {
+            "tokens": 577794,
+            "requests": 69
+          }
+        },
+        "observed_ttl_mix": {
+          "5m_pct": 68.9,
+          "1h_pct": 31.1,
+          "active_buckets": [
+            "5m",
+            "1h"
+          ]
+        }
+      }
+    },
+    "totals": {
+      "cache_read_tokens": 43688179,
+      "cache_write_tokens": 1860570,
+      "cache_write_5m_tokens": 1282776,
+      "cache_write_1h_tokens": 577794,
+      "cache_write_5m_requests": 291,
+      "cache_write_1h_requests": 69,
+      "uncached_input_tokens": 29909,
+      "requests": 361,
+      "hit_requests": 355,
+      "bust_count": 9,
+      "bust_write_tokens": 716751,
+      "savings_usd": 393.1936,
+      "write_premium_usd": 4.6514,
+      "net_savings_usd": 393.1936,
+      "hit_rate": 95.9,
+      "request_hit_rate": 98.3,
+      "observed_ttl_buckets": {
+        "5m": {
+          "tokens": 1282776,
+          "requests": 291
+        },
+        "1h": {
+          "tokens": 577794,
+          "requests": 69
+        }
+      },
+      "observed_ttl_mix": {
+        "5m_pct": 68.9,
+        "1h_pct": 31.1,
+        "active_buckets": [
+          "5m",
+          "1h"
+        ]
+      }
+    },
+    "miss_attribution": {
+      "totals": {
+        "ttl_expiry": 0,
+        "prefix_change": 3,
+        "unknown": 0,
+        "total": 3,
+        "ttl_expiry_pct": 0,
+        "prefix_change_pct": 100
+      },
+      "by_provider": {
+        "anthropic": {
+          "prefix_change": 3,
+          "total": 3
+        }
+      }
+    },
+    "prefix_freeze": {
+      "busts_avoided": 0,
+      "tokens_preserved": 0,
+      "compression_foregone_tokens": 0,
+      "net_benefit_tokens": 0
+    },
+    "compression_vs_cache": {
+      "tokens_saved_by_compression": 359846,
+      "tokens_lost_to_cache_bust": 321728,
+      "cache_bust_count": 9,
+      "net_tokens": 38118
+    },
+    "attribution": "Prefix caching is performed by the LLM provider (Anthropic, OpenAI). Headroom reports cache stats as observed from API responses. CacheAligner and prefix freeze improve cache hit rates by stabilizing the message prefix, but baseline caching happens without Headroom. Observed TTL bucket metrics reflect provider-reported cache write usage (for example Anthropic 5m vs 1h), not configured or remaining TTL."
+  },
+  "cost": {
+    "total_tokens_saved": 359846,
+    "total_input_tokens": 23006107,
+    "total_input_cost_usd": 65.6885,
+    "cache_write_5m_tokens": 1282776,
+    "cache_write_1h_tokens": 577794,
+    "per_model": {
+      "claude-fable-5": {
+        "requests": 344,
+        "tokens_saved": 359411,
+        "tokens_sent": 22320856,
+        "cache_write_5m_tokens": 1134904,
+        "cache_write_1h_tokens": 577794,
+        "reduction_pct": 1.6
+      },
+      "claude-opus-4-8": {
+        "requests": 19,
+        "tokens_saved": 435,
+        "tokens_sent": 685251,
+        "cache_write_5m_tokens": 147872,
+        "cache_write_1h_tokens": 0,
+        "reduction_pct": 0.1
+      }
+    },
+    "cost_with_headroom_usd": 65.6885,
+    "savings_usd": 3.5963,
+    "budget_limit_usd": null,
+    "budget_period": "daily",
+    "compression_savings_usd": 3.5963,
+    "cache_savings_usd": 393.1936,
+    "cli_tokens_avoided": 0,
+    "cli_filtering_tokens_avoided": 0,
+    "cli_tokens_included_in_compression": true,
+    "cli_filtering_tokens_included_in_compression": true
+  },
+  "compression": {
+    "ccr_entries": 7,
+    "ccr_max_entries": 1000,
+    "original_tokens_cached": 0,
+    "compressed_tokens_cached": 0,
+    "ccr_retrievals": 0
+  },
+  "compression_cache": {
+    "mode": "token",
+    "active_sessions": 4,
+    "total_entries": 12,
+    "total_hits": 309,
+    "total_misses": 14274,
+    "hit_rate": 2.1,
+    "total_tokens_saved": 0
+  },
+  "anon_telemetry_shipping": false,
+  "telemetry": {
+    "enabled": false,
+    "total_compressions": 0,
+    "total_retrievals": 0,
+    "global_retrieval_rate": 0,
+    "tool_signatures_tracked": 0,
+    "avg_compression_ratio": 0,
+    "avg_token_reduction": 0
+  },
+  "otel": {
+    "configured": true,
+    "enabled": false,
+    "service_name": "headroom-proxy",
+    "exporter": "otlp_http",
+    "endpoint": null,
+    "resource_attributes": {}
+  },
+  "langfuse": {
+    "configured": false,
+    "enabled": false,
+    "service_name": null,
+    "base_url": null,
+    "endpoint": null
+  },
+  "feedback_loop": {
+    "tools_tracked": 0,
+    "total_compressions": 0,
+    "total_retrievals": 0,
+    "global_retrieval_rate": 0,
+    "tools_with_high_retrieval": 0
+  },
+  "toin": {
+    "enabled": true,
+    "patterns_tracked": 6,
+    "total_compressions": 7,
+    "total_retrievals": 0,
+    "global_retrieval_rate": 0,
+    "patterns_with_recommendations": 0
+  },
+  "context_tool": {
+    "configured": "rtk",
+    "label": "RTK",
+    "available": true,
+    "stats": {
+      "tool": "rtk",
+      "label": "RTK",
+      "installed": true,
+      "scope": "global",
+      "total_commands": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "tokens_saved": 0,
+      "avg_savings_pct": 0,
+      "lifetime_avg_savings_pct": 0,
+      "total_time_ms": 0,
+      "session_savings_pct": null,
+      "session_avg_time_ms": null,
+      "avg_savings_pct_scope": "lifetime",
+      "lifetime_total_commands": 0,
+      "lifetime_input_tokens": 0,
+      "lifetime_output_tokens": 0,
+      "lifetime_tokens_saved": 0,
+      "lifetime_total_time_ms": 0,
+      "session_baseline_total_commands": 0,
+      "session_baseline_input_tokens": 0,
+      "session_baseline_output_tokens": 0,
+      "session_baseline_tokens_saved": 0,
+      "session_baseline_total_time_ms": 0,
+      "session_baseline_captured_at": 1782939263.346008,
+      "session": {
+        "commands": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "tokens_saved": 0,
+        "savings_pct": null,
+        "total_time_ms": 0,
+        "avg_time_ms": null
+      },
+      "lifetime": {
+        "commands": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "tokens_saved": 0,
+        "savings_pct": 0,
+        "total_time_ms": 0
+      },
+      "baseline": {
+        "commands": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "tokens_saved": 0,
+        "total_time_ms": 0,
+        "captured_at": 1782939263.346008
+      },
+      "sampled_at": 1782943568.9396968,
+      "sample_ttl_seconds": 60,
+      "refresh_interval_seconds": 60,
+      "counter_reset_detected": false
+    }
+  },
+  "cli_filtering": {
+    "tool": "rtk",
+    "label": "RTK",
+    "installed": true,
+    "scope": "global",
+    "total_commands": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "tokens_saved": 0,
+    "avg_savings_pct": 0,
+    "lifetime_avg_savings_pct": 0,
+    "total_time_ms": 0,
+    "session_savings_pct": null,
+    "session_avg_time_ms": null,
+    "avg_savings_pct_scope": "lifetime",
+    "lifetime_total_commands": 0,
+    "lifetime_input_tokens": 0,
+    "lifetime_output_tokens": 0,
+    "lifetime_tokens_saved": 0,
+    "lifetime_total_time_ms": 0,
+    "session_baseline_total_commands": 0,
+    "session_baseline_input_tokens": 0,
+    "session_baseline_output_tokens": 0,
+    "session_baseline_tokens_saved": 0,
+    "session_baseline_total_time_ms": 0,
+    "session_baseline_captured_at": 1782939263.346008,
+    "session": {
+      "commands": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "tokens_saved": 0,
+      "savings_pct": null,
+      "total_time_ms": 0,
+      "avg_time_ms": null
+    },
+    "lifetime": {
+      "commands": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "tokens_saved": 0,
+      "savings_pct": 0,
+      "total_time_ms": 0
+    },
+    "baseline": {
+      "commands": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "tokens_saved": 0,
+      "total_time_ms": 0,
+      "captured_at": 1782939263.346008
+    },
+    "sampled_at": 1782943568.9396968,
+    "sample_ttl_seconds": 60,
+    "refresh_interval_seconds": 60,
+    "counter_reset_detected": false
+  },
+  "proxy_inbound": {
+    "total": 437,
+    "completed": 436,
+    "active": 1,
+    "by_method": {
+      "POST": 432,
+      "HEAD": 1,
+      "GET": 4
+    },
+    "by_path": {
+      "/v1/messages": 432,
+      "/": 1,
+      "/livez": 1,
+      "/stats": 3
+    },
+    "by_status": {
+      "200": 367,
+      "202": 68,
+      "405": 1
+    }
+  },
+  "cache": {
+    "entries": 69,
+    "max_entries": 1000,
+    "total_hits": 0,
+    "ttl_seconds": 3600
+  },
+  "rate_limiter": {
+    "requests_per_minute": 60,
+    "tokens_per_minute": 100000,
+    "active_keys": 1
+  },
+  "request_logs": [
+    {
+      "request_id": "hr_1782943466_000421",
+      "timestamp": "2026-07-01T19:04:33.018458",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205336,
+      "input_tokens_optimized": 200155,
+      "output_tokens": 363,
+      "tokens_saved": 5181,
+      "savings_percent": 2.523181517123154,
+      "optimization_latency_ms": 299.6392250061035,
+      "total_latency_ms": 6355.266094207764,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943473_000422",
+      "timestamp": "2026-07-01T19:04:38.459225",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205450,
+      "input_tokens_optimized": 200269,
+      "output_tokens": 166,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5217814553419324,
+      "optimization_latency_ms": 327.9287815093994,
+      "total_latency_ms": 4910.490989685059,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943478_000423",
+      "timestamp": "2026-07-01T19:04:43.235714",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205645,
+      "input_tokens_optimized": 200464,
+      "output_tokens": 159,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5193902112864404,
+      "optimization_latency_ms": 285.05492210388184,
+      "total_latency_ms": 4391.177177429199,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943484_000424",
+      "timestamp": "2026-07-01T19:04:53.400152",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205888,
+      "input_tokens_optimized": 200707,
+      "output_tokens": 341,
+      "tokens_saved": 5181,
+      "savings_percent": 2.516416692570718,
+      "optimization_latency_ms": 334.99979972839355,
+      "total_latency_ms": 8100.289106369019,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943500_000425",
+      "timestamp": "2026-07-01T19:05:10.076054",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206211,
+      "input_tokens_optimized": 201030,
+      "output_tokens": 277,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5124750861981173,
+      "optimization_latency_ms": 1494.265079498291,
+      "total_latency_ms": 8308.293104171753,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943513_000426",
+      "timestamp": "2026-07-01T19:05:19.350438",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206383,
+      "input_tokens_optimized": 201202,
+      "output_tokens": 272,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5103811844967847,
+      "optimization_latency_ms": 341.92800521850586,
+      "total_latency_ms": 5796.814680099487,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943520_000427",
+      "timestamp": "2026-07-01T19:05:42.030045",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206579,
+      "input_tokens_optimized": 201398,
+      "output_tokens": 987,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5079993610192712,
+      "optimization_latency_ms": 289.3939018249512,
+      "total_latency_ms": 20806.149005889893,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943542_000428",
+      "timestamp": "2026-07-01T19:06:07.419274",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 207880,
+      "input_tokens_optimized": 202699,
+      "output_tokens": 1340,
+      "tokens_saved": 5181,
+      "savings_percent": 2.4923032518760824,
+      "optimization_latency_ms": 940.2649402618408,
+      "total_latency_ms": 24175.95100402832,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "8316bce8efe31f15"
+    },
+    {
+      "request_id": "hr_1782943567_000429",
+      "timestamp": "2026-07-01T19:06:17.590041",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 658,
+      "input_tokens_optimized": 658,
+      "output_tokens": 508,
+      "tokens_saved": 0,
+      "savings_percent": 0,
+      "optimization_latency_ms": 7.5130462646484375,
+      "total_latency_ms": 10050.688982009888,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:user_message"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "7269c31d99b34559"
+    },
+    {
+      "request_id": "hr_1782943578_000432",
+      "timestamp": "2026-07-01T19:06:25.460590",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 209393,
+      "input_tokens_optimized": 204212,
+      "output_tokens": 13,
+      "tokens_saved": 5181,
+      "savings_percent": 2.4742947471978525,
+      "optimization_latency_ms": 335.85214614868164,
+      "total_latency_ms": 6553.209066390991,
+      "tags": {
+        "memory_skip_reason": "no_handler",
+        "client": "claude-code"
+      },
+      "cache_hit": true,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:user_message"
+      ],
+      "waste_signals": null,
+      "error": null,
+      "turn_id": "2fb140a780964571"
+    }
+  ],
+  "recent_requests": [
+    {
+      "request_id": "hr_1782943466_000421",
+      "timestamp": "2026-07-01T19:04:33.018458",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205336,
+      "input_tokens_optimized": 200155,
+      "output_tokens": 363,
+      "tokens_saved": 5181,
+      "savings_percent": 2.523181517123154,
+      "optimization_latency_ms": 299.6392250061035,
+      "total_latency_ms": 6355.266094207764,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943473_000422",
+      "timestamp": "2026-07-01T19:04:38.459225",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205450,
+      "input_tokens_optimized": 200269,
+      "output_tokens": 166,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5217814553419324,
+      "optimization_latency_ms": 327.9287815093994,
+      "total_latency_ms": 4910.490989685059,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943478_000423",
+      "timestamp": "2026-07-01T19:04:43.235714",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205645,
+      "input_tokens_optimized": 200464,
+      "output_tokens": 159,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5193902112864404,
+      "optimization_latency_ms": 285.05492210388184,
+      "total_latency_ms": 4391.177177429199,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943484_000424",
+      "timestamp": "2026-07-01T19:04:53.400152",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 205888,
+      "input_tokens_optimized": 200707,
+      "output_tokens": 341,
+      "tokens_saved": 5181,
+      "savings_percent": 2.516416692570718,
+      "optimization_latency_ms": 334.99979972839355,
+      "total_latency_ms": 8100.289106369019,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943500_000425",
+      "timestamp": "2026-07-01T19:05:10.076054",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206211,
+      "input_tokens_optimized": 201030,
+      "output_tokens": 277,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5124750861981173,
+      "optimization_latency_ms": 1494.265079498291,
+      "total_latency_ms": 8308.293104171753,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943513_000426",
+      "timestamp": "2026-07-01T19:05:19.350438",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206383,
+      "input_tokens_optimized": 201202,
+      "output_tokens": 272,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5103811844967847,
+      "optimization_latency_ms": 341.92800521850586,
+      "total_latency_ms": 5796.814680099487,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943520_000427",
+      "timestamp": "2026-07-01T19:05:42.030045",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 206579,
+      "input_tokens_optimized": 201398,
+      "output_tokens": 987,
+      "tokens_saved": 5181,
+      "savings_percent": 2.5079993610192712,
+      "optimization_latency_ms": 289.3939018249512,
+      "total_latency_ms": 20806.149005889893,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943542_000428",
+      "timestamp": "2026-07-01T19:06:07.419274",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 207880,
+      "input_tokens_optimized": 202699,
+      "output_tokens": 1340,
+      "tokens_saved": 5181,
+      "savings_percent": 2.4923032518760824,
+      "optimization_latency_ms": 940.2649402618408,
+      "total_latency_ms": 24175.95100402832,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943567_000429",
+      "timestamp": "2026-07-01T19:06:17.590041",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 658,
+      "input_tokens_optimized": 658,
+      "output_tokens": 508,
+      "tokens_saved": 0,
+      "savings_percent": 0,
+      "optimization_latency_ms": 7.5130462646484375,
+      "total_latency_ms": 10050.688982009888,
+      "transforms_applied": [
+        "router:protected:user_message"
+      ],
+      "waste_signals": null
+    },
+    {
+      "request_id": "hr_1782943578_000432",
+      "timestamp": "2026-07-01T19:06:25.460590",
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "input_tokens_original": 209393,
+      "input_tokens_optimized": 204212,
+      "output_tokens": 13,
+      "tokens_saved": 5181,
+      "savings_percent": 2.4742947471978525,
+      "optimization_latency_ms": 335.85214614868164,
+      "total_latency_ms": 6553.209066390991,
+      "transforms_applied": [
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:tool_result:html",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:system_message",
+        "router:protected:system_message",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:excluded:tool",
+        "router:protected:system_message",
+        "router:protected:error_output",
+        "router:protected:user_message"
+      ],
+      "waste_signals": null
+    }
+  ],
+  "log_full_messages": false,
+  "subscription_window": {
+    "latest": {
+      "five_hour": {
+        "used": 0,
+        "limit": 0,
+        "utilization_pct": 28,
+        "resets_at": "2026-07-02T02:10:00Z",
+        "seconds_to_reset": 14615.450421
+      },
+      "seven_day": {
+        "used": 0,
+        "limit": 0,
+        "utilization_pct": 6,
+        "resets_at": "2026-07-03T23:00:00Z",
+        "seconds_to_reset": 176015.450436
+      },
+      "extra_usage": {
+        "is_enabled": true,
+        "monthly_limit_usd": 1100,
+        "used_credits_usd": 0,
+        "utilization_pct": null
+      },
+      "polled_at": "2026-07-01T22:05:08Z",
+      "token_prefix": "sk-ant-o"
+    },
+    "window_tokens": {
+      "input": 341555,
+      "output": 749093,
+      "cache_reads": 127829886,
+      "cache_writes_5m": 3522851,
+      "cache_writes_1h": 966392,
+      "cache_writes_total": 4488872,
+      "total_raw": 133409406,
+      "weighted_token_equivalent": 135467211,
+      "by_model": {
+        "claude-fable-5": {
+          "input": 315593,
+          "output": 719572,
+          "cache_reads": 125158629,
+          "cache_writes_5m": 3232307,
+          "cache_writes_1h": 912046,
+          "cache_writes_total": 4144353
+        },
+        "claude-sonnet-5": {
+          "input": 2272,
+          "output": 7229,
+          "cache_reads": 848804,
+          "cache_writes_5m": 155149,
+          "cache_writes_1h": 0,
+          "cache_writes_total": 155149
+        },
+        "claude-opus-4-8": {
+          "input": 23690,
+          "output": 22292,
+          "cache_reads": 1822453,
+          "cache_writes_5m": 135395,
+          "cache_writes_1h": 54346,
+          "cache_writes_total": 189370
+        }
+      }
+    },
+    "contribution": {
+      "tokens_submitted": 389782,
+      "tokens_saved": {
+        "compression": 5181,
+        "proxy_compression": 5181,
+        "cli_filtering": 0,
+        "rtk": 0,
+        "cli_filtering_raw": 0,
+        "rtk_raw": 0,
+        "cache_reads": 755300,
+        "total": 760481
+      },
+      "raw_without_headroom": 394963,
+      "efficiency_pct": 192.5,
+      "savings_usd": {
+        "compression": 0,
+        "cache": 0,
+        "total": 0
+      }
+    },
+    "discrepancies": [],
+    "poll_count": 30,
+    "poll_errors": 0,
+    "last_error": null,
+    "last_active_at": "2026-07-01T22:06:18Z"
+  },
+  "throughput": {
+    "rolling": {
+      "input_wall_clock": 5092.77,
+      "input_active_p50": 5909.46,
+      "input_active_p95": 32301.99,
+      "compression_p50": 591879.09,
+      "compression_p95": 813819.04,
+      "forward_p50": 5724.32,
+      "forward_p95": 31485.09,
+      "generation_p50": 89.94,
+      "generation_p95": 166.46
+    },
+    "current": {
+      "input_wall_clock": 9617.55,
+      "input_active_p50": 21196.07,
+      "input_active_p95": 43589.72,
+      "compression_p50": 638923.7,
+      "compression_p95": 759277.81,
+      "forward_p50": 20659.49,
+      "forward_p95": 42490.87,
+      "generation_p50": 86.89,
+      "generation_p95": 189.61
+    }
+  },
+  "config": {
+    "savings_profile": null,
+    "target_ratio": null,
+    "target_savings_percent": null,
+    "compress_user_messages": false,
+    "compress_system_messages": false,
+    "protect_recent": null,
+    "protect_analysis_context": null,
+    "min_tokens_to_crush": 500,
+    "max_items_after_crush": 50,
+    "smart_crusher_with_compaction": null,
+    "force_kompress": false,
+    "accuracy_guard": null
+  },
+  "codex_rate_limits": {
+    "primary": {
+      "used_percent": 1,
+      "window_minutes": 300,
+      "window_label": "5h",
+      "resets_at": 1783204633
+    },
+    "secondary": {
+      "used_percent": 81,
+      "window_minutes": 10080,
+      "window_label": "168h",
+      "resets_at": 1783388592
+    }
+  }
+}

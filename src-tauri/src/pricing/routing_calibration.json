@@ -1,0 +1,787 @@
+{
+  "schema": 1,
+  "calibration_version": "2026-10-15.1",
+  "price_version": "2026-10-15",
+  "generated_by": "scripts/jev-calibration.py",
+  "method": [
+    "k = cost of the task on the default model / cost of the routed worker's tokens at the default model's prices.",
+    "Paired runs only: one vanilla and one Halv run of the same task and repetition, both passed.",
+    "f removes the Headroom, Crux and RTK effect: f = Halv cost / vanilla cost on the same model in toolkit-only pairs (JEV chose max, no worker). The smaller of the ratio of sums and the median is used.",
+    "k_charged = (f x vanilla - Halv coordinator) / workers at default prices: a lower bound, because it also charges the coordinator's own work to the route.",
+    "k_brief = f x vanilla / workers at default prices: an upper bound, because it assumes that the worker did the complete task.",
+    "k_low = max(0, task-level bootstrap 10th percentile of the k_charged ratio of sums); with one task, the 25th percentile of the pairs. k_point = the k_charged ratio of sums. k_high = the k_brief ratio of sums.",
+    "A cell needs 5 pairs from 2 tasks to be 'calibrated'. A 'thin' cell can only lower k below the floor, and Halv applies the floor rule to it."
+  ],
+  "limits": [
+    "The bench mixes all Halv features. f comes from other runs, so the toolkit correction is approximate.",
+    "Astra has no toolkit-only runs. Its f is the smallest measured factor of the other models.",
+    "The Astra hierarchy runs have Luna and Sol workers in one run. Their k is one value for the run (routed family '*').",
+    "The Claude bench routes the complete task to one worker (legacy flow). No bench run has Workflow agents.",
+    "The Claude routed pairs have one task (ArcadeDB-4281) and Claude Sonnet 5, not Sonnet 5.5. Halv uses them per family.",
+    "The bench prices sessions at base rates. Per-request long-context rates are not in the bench data.",
+    "Cells match by model family and role. A pair without a cell uses the floor."
+  ],
+  "floor": {
+    "k_low": 0.25,
+    "k_point": null,
+    "k_high": 1.0,
+    "rule": "The uncertain part counts only when it still gains at k_low: max(0, k_low x default cost - routed cost)."
+  },
+  "toolkit_factor": {
+    "claude-opus": {
+      "n_pairs": 20,
+      "n_tasks": 6,
+      "ratio_of_sums": 0.9895,
+      "median": 0.9721,
+      "campaigns": [
+        "rebench-opus55-high-jev-halv060-r2",
+        "rebench-opus55-high-jev-halv060-r3"
+      ],
+      "used": 0.9721
+    },
+    "gpt-luna (gpt-5.6-luna)": {
+      "n_pairs": 7,
+      "n_tasks": 7,
+      "ratio_of_sums": 0.7622,
+      "median": 0.9334,
+      "campaigns": [
+        "rebench-luna-medium-fast (20-pair evidence)"
+      ],
+      "used": 0.7622
+    }
+  },
+  "toolkit_factor_fallback": 0.7622,
+  "cells": [
+    {
+      "default_family": "claude-opus",
+      "routed_family": "claude-opus",
+      "role": "implement",
+      "flows": [
+        "legacy"
+      ],
+      "status": "thin",
+      "k_low": 0.0,
+      "k_point": 0.0,
+      "k_high": 1.0,
+      "n_pairs": 2,
+      "n_tasks": 1,
+      "bench": {
+        "k_charged_median": -0.4815,
+        "k_charged_p25": -0.4818,
+        "k_charged_ratio_of_sums": -0.4816,
+        "k_charged_bootstrap_p10": null,
+        "k_brief_median": 1.125,
+        "k_brief_ratio_of_sums": 1.1232,
+        "worker_actual_usd": 0.7375,
+        "worker_default_usd": 0.7375,
+        "vanilla_usd": 0.8522,
+        "coordinator_usd": 1.1836
+      },
+      "models": [
+        "claude-opus-5-5"
+      ],
+      "campaigns": [
+        "rebench-opus55-high-jev-halv060-r1"
+      ],
+      "pairs": [
+        {
+          "campaign": "rebench-opus55-high-jev-halv060-r1",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 1,
+          "k_charged": -0.4821,
+          "k_brief": 1.1083
+        },
+        {
+          "campaign": "rebench-opus55-high-jev-halv060-r1",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 2,
+          "k_charged": -0.481,
+          "k_brief": 1.1416
+        }
+      ]
+    },
+    {
+      "default_family": "claude-opus",
+      "routed_family": "claude-sonnet",
+      "role": "implement",
+      "flows": [
+        "legacy"
+      ],
+      "status": "thin",
+      "k_low": 0.0,
+      "k_point": 0.0189,
+      "k_high": 0.3676,
+      "n_pairs": 3,
+      "n_tasks": 1,
+      "bench": {
+        "k_charged_median": 0.0203,
+        "k_charged_p25": -0.0527,
+        "k_charged_ratio_of_sums": 0.0189,
+        "k_charged_bootstrap_p10": null,
+        "k_brief_median": 0.3009,
+        "k_brief_ratio_of_sums": 0.3676,
+        "worker_actual_usd": 1.9431,
+        "worker_default_usd": 2.9692,
+        "vanilla_usd": 1.1227,
+        "coordinator_usd": 1.0352
+      },
+      "models": [
+        "claude-opus-5-5",
+        "claude-sonnet-5"
+      ],
+      "campaigns": [
+        "rebench-opus55-jev-reasoning-cheap-4281"
+      ],
+      "pairs": [
+        {
+          "campaign": "rebench-opus55-jev-reasoning-cheap-4281",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 1,
+          "k_charged": -0.1257,
+          "k_brief": 0.2983
+        },
+        {
+          "campaign": "rebench-opus55-jev-reasoning-cheap-4281",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 2,
+          "k_charged": 0.2327,
+          "k_brief": 0.547
+        },
+        {
+          "campaign": "rebench-opus55-jev-reasoning-cheap-4281",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 3,
+          "k_charged": 0.0203,
+          "k_brief": 0.3009
+        }
+      ]
+    },
+    {
+      "default_family": "gpt-astra",
+      "routed_family": "*",
+      "role": "any",
+      "flows": [
+        "hierarchy"
+      ],
+      "status": "calibrated",
+      "k_low": 0.1928,
+      "k_point": 0.4271,
+      "k_high": 0.5731,
+      "n_pairs": 23,
+      "n_tasks": 9,
+      "bench": {
+        "k_charged_median": 0.1768,
+        "k_charged_p25": 0.0298,
+        "k_charged_ratio_of_sums": 0.4271,
+        "k_charged_bootstrap_p10": 0.1928,
+        "k_brief_median": 0.3756,
+        "k_brief_ratio_of_sums": 0.5731,
+        "worker_actual_usd": 34.8022,
+        "worker_default_usd": 238.9262,
+        "vanilla_usd": 179.6374,
+        "coordinator_usd": 34.8837
+      },
+      "models": [
+        "gpt-6-astra",
+        "gpt-6-luna",
+        "gpt-6-sol"
+      ],
+      "campaigns": [
+        "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3"
+      ],
+      "pairs": [
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 2,
+          "k_charged": 0.2027,
+          "k_brief": 0.4135
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 3,
+          "k_charged": 0.1144,
+          "k_brief": 0.4819
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+          "repetition": 1,
+          "k_charged": 0.3213,
+          "k_brief": 0.5065
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+          "repetition": 2,
+          "k_charged": 0.33,
+          "k_brief": 0.5267
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+          "repetition": 3,
+          "k_charged": 0.2167,
+          "k_brief": 0.3484
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4455",
+          "repetition": 1,
+          "k_charged": 0.7852,
+          "k_brief": 0.8386
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4455",
+          "repetition": 2,
+          "k_charged": 1.1257,
+          "k_brief": 1.2296
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4455",
+          "repetition": 3,
+          "k_charged": 0.9362,
+          "k_brief": 1.0135
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+          "repetition": 1,
+          "k_charged": -0.0245,
+          "k_brief": 0.0499
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+          "repetition": 2,
+          "k_charged": 0.1768,
+          "k_brief": 0.277
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+          "repetition": 3,
+          "k_charged": 0.1061,
+          "k_brief": 0.238
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4048",
+          "repetition": 1,
+          "k_charged": -0.0331,
+          "k_brief": 0.1998
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4048",
+          "repetition": 2,
+          "k_charged": -0.0133,
+          "k_brief": 0.2602
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4048",
+          "repetition": 3,
+          "k_charged": 0.0122,
+          "k_brief": 0.3496
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+          "repetition": 1,
+          "k_charged": 0.0076,
+          "k_brief": 0.1337
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+          "repetition": 2,
+          "k_charged": 0.0474,
+          "k_brief": 0.3284
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+          "repetition": 3,
+          "k_charged": -0.0085,
+          "k_brief": 0.3977
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/PerryTS__perry-3982",
+          "repetition": 3,
+          "k_charged": 1.0542,
+          "k_brief": 1.1688
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Soju06__codex-lb-744",
+          "repetition": 1,
+          "k_charged": 0.0671,
+          "k_brief": 0.1935
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Soju06__codex-lb-744",
+          "repetition": 2,
+          "k_charged": 0.1775,
+          "k_brief": 0.3756
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/Soju06__codex-lb-744",
+          "repetition": 3,
+          "k_charged": 0.0687,
+          "k_brief": 0.2256
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/apache__hugegraph-3037",
+          "repetition": 1,
+          "k_charged": 0.8715,
+          "k_brief": 0.9971
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+          "task": "ibragim-badertdinov/apache__hugegraph-3037",
+          "repetition": 2,
+          "k_charged": 0.2392,
+          "k_brief": 0.5249
+        }
+      ]
+    },
+    {
+      "default_family": "gpt-astra",
+      "routed_family": "gpt-sol",
+      "role": "implement",
+      "flows": [
+        "legacy"
+      ],
+      "status": "calibrated",
+      "k_low": 0.0,
+      "k_point": 0.043,
+      "k_high": 0.2902,
+      "n_pairs": 9,
+      "n_tasks": 4,
+      "bench": {
+        "k_charged_median": 0.0037,
+        "k_charged_p25": -0.0545,
+        "k_charged_ratio_of_sums": 0.043,
+        "k_charged_bootstrap_p10": -0.0075,
+        "k_brief_median": 0.2854,
+        "k_brief_ratio_of_sums": 0.2902,
+        "worker_actual_usd": 18.9045,
+        "worker_default_usd": 94.5225,
+        "vanilla_usd": 35.9879,
+        "coordinator_usd": 23.3698
+      },
+      "models": [
+        "gpt-6-astra",
+        "gpt-6-sol"
+      ],
+      "campaigns": [
+        "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+        "deepswe-v11-jev-main-crux0102-paired-normal-lean-r16",
+        "rebench-astra-medium-jev-crux-on-20260928-r1"
+      ],
+      "pairs": [
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/abs-module-cache-flags",
+          "repetition": 1,
+          "k_charged": -0.0545,
+          "k_brief": 0.1833
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/abs-module-cache-flags",
+          "repetition": 3,
+          "k_charged": -0.0562,
+          "k_brief": 0.2499
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/abs-stepped-slices",
+          "repetition": 1,
+          "k_charged": 0.0606,
+          "k_brief": 0.3129
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/abs-stepped-slices",
+          "repetition": 2,
+          "k_charged": 0.0037,
+          "k_brief": 0.3092
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/abs-stepped-slices",
+          "repetition": 3,
+          "k_charged": -0.088,
+          "k_brief": 0.2265
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/actionlint-action-pinning-lint",
+          "repetition": 1,
+          "k_charged": 0.1452,
+          "k_brief": 0.2721
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+          "task": "datacurve/actionlint-action-pinning-lint",
+          "repetition": 2,
+          "k_charged": 0.3464,
+          "k_brief": 0.5811
+        },
+        {
+          "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-lean-r16",
+          "task": "datacurve/abs-module-cache-flags",
+          "repetition": 1,
+          "k_charged": 0.1133,
+          "k_brief": 0.2854
+        },
+        {
+          "campaign": "rebench-astra-medium-jev-crux-on-20260928-r1",
+          "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+          "repetition": 1,
+          "k_charged": -0.0163,
+          "k_brief": 0.2927
+        }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/PerryTS__perry-3982",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/PerryTS__perry-3982",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/agno-agi__agno-8148",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/agno-agi__agno-8148",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/agno-agi__agno-8148",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__dubbo-go-3357",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__dubbo-go-3357",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__dubbo-go-3357",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__hugegraph-3037",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__pulsar-25793",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__pulsar-25793",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-hierarchy-quiet-20260928-r3",
+      "task": "ibragim-badertdinov/apache__pulsar-25793",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+      "task": "datacurve/abs-module-cache-flags",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (NonZeroAgentExitCodeError)"
+    },
+    {
+      "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+      "task": "datacurve/abs-module-cache-flags",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (JevRuntimeProofError)"
+    },
+    {
+      "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+      "task": "datacurve/abs-module-cache-flags",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-idle-r15",
+      "task": "datacurve/actionlint-action-pinning-lint",
+      "repetition": 3,
+      "reason": "no vanilla run"
+    },
+    {
+      "campaign": "deepswe-v11-jev-main-crux0102-paired-normal-clean-r14",
+      "task": "datacurve/abs-module-cache-flags",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-astra-medium-jev-crux-on-20260928-r1",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (UserRequestedPause)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r1",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 3,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r1",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 3,
+      "reason": "invalid run (FileNotFoundError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r1",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 3,
+      "reason": "invalid run (FileNotFoundError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r2",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (JevRuntimeProofError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r2",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4281",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r2",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r2",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (FileNotFoundError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r2",
+      "task": "ibragim-badertdinov/ArcadeData__arcadedb-4411",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (FileNotFoundError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Gentleman-Programming__gentle-ai-595",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4048",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (JevRuntimeProofError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+      "arm": "halv",
+      "repetition": 2,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "arm": "vanilla",
+      "repetition": 2,
+      "reason": "invalid run (WorkerProcessExit)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/PerryTS__perry-3982",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/PerryTS__perry-3982",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/PerryTS__perry-3982",
+      "arm": "halv",
+      "repetition": 1,
+      "reason": "invalid run (BenchError)"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4129",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/HKUDS__nanobot-4274",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 1,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 2,
+      "reason": "outcome differs or both failed"
+    },
+    {
+      "campaign": "rebench-opus55-high-jev-halv060-r3",
+      "task": "ibragim-badertdinov/Martian-Engineering__lossless-claw-814",
+      "repetition": 3,
+      "reason": "outcome differs or both failed"
+    }
+  ]
+}

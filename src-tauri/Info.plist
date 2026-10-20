@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Halv uses the microphone only when you start speech dictation for a prompt.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Halv converts speech to text only when you start prompt dictation.</string>
+</dict>
+</plist>

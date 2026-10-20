@@ -1,0 +1,63 @@
+{
+  "name": "halv",
+  "private": true,
+  "version": "0.8.2",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:fresh": "VITE_HALV_FRESH_STATE=1 tauri dev",
+    "dev:preflight": "node scripts/dev-preflight.mjs",
+    "build": "tsc && vite build",
+    "build:headroom-runtime": "node scripts/build-headroom-runtime.mjs",
+    "build:supervisor": "node scripts/build-supervisor.mjs",
+    "fetch:crux": "node scripts/fetch-crux.mjs",
+    "fetch:rtk": "node scripts/fetch-rtk.mjs",
+    "preview": "vite preview",
+    "screenshots:marketing": "playwright test --config playwright.marketing.config.ts",
+    "test": "pnpm test:unit && pnpm test:headroom-runtime && pnpm test:native-bundle",
+    "test:headroom-runtime": "node --test scripts/headroom-runtime.test.mjs",
+    "test:i18n": "node scripts/i18n-extract.mjs --check && node scripts/i18n-audit.mjs --require-complete",
+    "test:native-bundle": "node --test scripts/native-bundle.test.mjs",
+    "test:savings": "node --experimental-strip-types --test tests/savings.test.ts",
+    "test:shell": "node --experimental-strip-types --test tests/shell.test.ts",
+    "test:unit": "node --experimental-strip-types --test \"tests/*.test.ts\"",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
+    "shots": "node --experimental-strip-types scripts/export-shots.ts",
+    "verify:headroom-runtime": "node scripts/verify-headroom-runtime.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "highlight.js": "^11.11.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

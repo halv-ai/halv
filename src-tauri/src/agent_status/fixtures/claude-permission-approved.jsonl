@@ -1,0 +1,18 @@
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"SessionStart","source":"startup","model":"claude-opus"}}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"idle","turnSeq":0}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"Run the auth tests and fix failures."}}
+{"kind":"presence","status":"busy"}
+{"kind":"expect","status":"working","turnSeq":1}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"pnpm test --filter auth","description":"Run the auth tests"},"tool_use_id":"toolu_01"}}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"pnpm test --filter auth","description":"Run the auth tests"},"permission_suggestions":[{"type":"addRules"}]}}
+{"kind":"expect","status":"working"}
+{"kind":"presence","status":"waiting","waitingFor":"permission prompt"}
+{"kind":"expect","status":"needsApproval","reason":"permission","waitSeq":1,"prompt":{"kind":"approval","toolName":"Bash","command":"pnpm test --filter auth"}}
+{"kind":"presence","status":"busy"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"pnpm test --filter auth","description":"Run the auth tests"},"tool_response":{"stdout":"ok","stderr":"","interrupted":false},"tool_use_id":"toolu_01","duration_ms":1520}}
+{"kind":"expect","status":"working","waitSeq":1,"turnSeq":1}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false,"background_tasks":[],"session_crons":[]}}
+{"kind":"expect","status":"working"}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"done","unread":true,"turnSeq":1}

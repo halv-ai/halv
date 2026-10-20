@@ -1,0 +1,97 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Halv",
+  "version": "0.8.2",
+  "identifier": "ai.halv.app",
+  "build": {
+    "beforeDevCommand": "node scripts/dev-preflight.mjs && node scripts/build-supervisor.mjs && node scripts/fetch-rtk.mjs && node scripts/fetch-crux.mjs && pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node scripts/build-supervisor.mjs && node scripts/fetch-rtk.mjs && node scripts/fetch-crux.mjs && node scripts/verify-headroom-runtime.mjs && pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "Halv",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "style-src": "'self' 'unsafe-inline'"
+      },
+      "devCsp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/pedr0v/halv-releases/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNEOTY4OTI2N0Y2MjMwNDEKUldSQk1HSi9Kb21XUGZVYzkvUlZGTnZKdWwxcjlmQUM0OTQrVS9NeGU1MEJ4VjRxZllSUHRzUXgK"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "dmg",
+      "app",
+      "msi",
+      "appimage",
+      "deb",
+      "rpm"
+    ],
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/rtk",
+      "binaries/crux",
+      "binaries/halv-supervisor"
+    ],
+    "resources": {
+      "resources/headroom-runtime/": "headroom-runtime/",
+      "../LICENSE": "licenses/LICENSE",
+      "../NOTICE": "licenses/NOTICE",
+      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "resources/licenses/rtk-0.42.4-LICENSE": "licenses/rtk-0.42.4-LICENSE",
+      "resources/licenses/crux-LICENSE": "licenses/crux-LICENSE",
+      "resources/licenses/orca-LICENSE": "licenses/orca-LICENSE",
+      "resources/licenses/ponytail-LICENSE": "licenses/ponytail-LICENSE",
+      "resources/licenses/lucide-LICENSE": "licenses/lucide-LICENSE"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null,
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": null,
+      "timestampUrl": null,
+      "tsp": false,
+      "signCommand": null
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}

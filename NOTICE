@@ -1,0 +1,17 @@
+Halv
+Copyright 2026 Halv (halv.ai)
+
+This product includes software developed by Halv (https://halv.ai).
+Halv is licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product includes third-party software under other licenses.
+THIRD_PARTY_NOTICES.md lists each component, its license, and the files
+that contain it.
+
+This product bundles RTK (https://github.com/rtk-ai/rtk).
+Copyright 2024 rtk-ai and rtk-ai Labs.
+RTK is licensed under the Apache License, Version 2.0.
+
+This product bundles a modified Headroom runtime.
+Copyright 2025 Headroom Contributors. Modified by Halv.
+Headroom is licensed under the Apache License, Version 2.0.

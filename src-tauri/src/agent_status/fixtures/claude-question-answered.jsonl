@@ -1,0 +1,12 @@
+{"kind":"presence","status":"idle"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"Add a session store."}}
+{"kind":"presence","status":"busy"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which session store should the middleware use?","header":"Store","multiSelect":false,"options":[{"label":"Redis","description":"Fast, needs a server"},{"label":"Postgres","description":"Already deployed"}]}]},"tool_use_id":"toolu_q1"}}
+{"kind":"presence","status":"waiting","waitingFor":"input needed"}
+{"kind":"expect","status":"needsInput","reason":"question","waitSeq":1,"prompt":{"kind":"question","text":"Which session store should the middleware use?","options":["Redis","Postgres"]}}
+{"kind":"presence","status":"busy"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which session store should the middleware use?","header":"Store","multiSelect":false,"options":[{"label":"Redis","description":"Fast, needs a server"},{"label":"Postgres","description":"Already deployed"}]}]},"tool_response":{"answers":{"Which session store should the middleware use?":"Redis"}},"tool_use_id":"toolu_q1"}}
+{"kind":"expect","status":"working"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false}}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"done","unread":true}

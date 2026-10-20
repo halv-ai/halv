@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Halv</title>
+    <script>
+      (function () {
+        var key = "halv.theme";
+        var preference = "system";
+        try {
+          var stored = window.localStorage.getItem(key);
+          if (stored === "light" || stored === "dark" || stored === "system") {
+            preference = stored;
+          }
+        } catch (_) {
+          preference = "system";
+        }
+        var systemDark = window.matchMedia
+          ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          : true;
+        var resolved = preference === "system" ? (systemDark ? "dark" : "light") : preference;
+        var root = document.documentElement;
+        root.classList.add("theme-loading");
+        root.classList.toggle("dark", resolved === "dark");
+        root.dataset.themePreference = preference;
+        root.dataset.theme = resolved;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

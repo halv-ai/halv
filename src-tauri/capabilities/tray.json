@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tray",
+  "description": "The tray panel can receive app events and call only the tray panel commands.",
+  "windows": ["tray"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-tray-get-snapshot",
+    "allow-tray-action",
+    "allow-tray-resize"
+  ]
+}

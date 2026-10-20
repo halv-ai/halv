@@ -1,0 +1,14 @@
+{"kind":"presence","status":"idle"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"One."}}
+{"kind":"presence","status":"busy"}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"working"}
+{"kind":"tick","afterMs":500}
+{"kind":"expect","status":"working"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false}}
+{"kind":"expect","status":"done","unread":true,"turnSeq":1}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"Two."}}
+{"kind":"presence","status":"busy"}
+{"kind":"presence","status":"idle"}
+{"kind":"tick","afterMs":1600}
+{"kind":"expect","status":"interrupted","unread":false,"turnSeq":2}

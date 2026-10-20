@@ -1,0 +1,6 @@
+{"kind":"presence","status":"idle"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"Summarize the diff."}}
+{"kind":"presence","status":"busy"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"StopFailure","error":"rate_limit","error_details":"429 Too Many Requests","last_assistant_message":""}}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"failed","reason":"error","unread":true}

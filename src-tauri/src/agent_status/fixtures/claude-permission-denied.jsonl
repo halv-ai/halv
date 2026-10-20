@@ -1,0 +1,9 @@
+{"kind":"presence","status":"idle"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"Delete the build folder."}}
+{"kind":"presence","status":"busy"}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf build"},"tool_use_id":"toolu_d1"}}
+{"kind":"hook","payload":{"session_id":"00000000-0000-4000-8000-000000000000","transcript_path":"/Users/u/.claude/projects/-repo/00000000-0000-4000-8000-000000000000.jsonl","cwd":"/Users/u/repo","permission_mode":"default","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}}
+{"kind":"presence","status":"waiting","waitingFor":"permission prompt"}
+{"kind":"expect","status":"needsApproval","prompt":{"kind":"approval","toolName":"Bash","command":"rm -rf build"}}
+{"kind":"presence","status":"idle"}
+{"kind":"expect","status":"interrupted","unread":false}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <mask id="mark-cutouts" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32">
+      <rect width="32" height="32" fill="#FFFFFF"/>
+      <rect x="4.27" y="4.27" width="23.46" height="23.46" rx="5.33" stroke="#000000" stroke-width="1.25"/>
+      <text x="16" y="21.69" fill="#000000" font-family="Georgia, 'Times New Roman', serif" font-size="16.71" font-style="italic" text-anchor="middle">½</text>
+    </mask>
+  </defs>
+  <rect x="0.36" y="0.36" width="31.28" height="31.28" rx="7.11" fill="#000000" mask="url(#mark-cutouts)"/>
+</svg>
