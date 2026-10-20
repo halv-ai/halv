@@ -52,7 +52,7 @@ jobs:
     runs-on: ${{ github.event_name == 'repository_dispatch' && 'macos-latest' || 'ubuntu-22.04' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -134,7 +134,7 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Checkout tested default-branch commit
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -187,7 +187,7 @@ jobs:
       release_id: ${{ steps.release.outputs.release_id }}
     steps:
       - name: Checkout trusted release helper
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate-release.outputs.release_sha }}
           persist-credentials: false
@@ -258,7 +258,7 @@ jobs:
             tauri_args: --target x86_64-pc-windows-msvc --bundles msi
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate-release.outputs.release_sha }}
           persist-credentials: false
@@ -290,7 +290,7 @@ jobs:
 
       - name: Checkout immutable Headroom fork
         if: steps.headroom-runtime-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: pedr0v/headroom
           ref: 1dc3f3a0c0f39a2965c9c9c70c10768c8591fb9f
@@ -749,7 +749,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout trusted release helper
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.validate-release.outputs.release_sha }}
           persist-credentials: false
