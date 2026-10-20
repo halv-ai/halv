@@ -42,7 +42,7 @@ rustls = { version = "0.23.41", default-features = false, features = ["ring", "s
 serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.19"
 serde_json = "1.0.149"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 # The snow "std" feature also turns on the optional "ring" dependency.
 # ring needs a C toolchain for each mobile target, so the crate keeps it off.
 snow = { version = "0.10.0", default-features = false, features = [
