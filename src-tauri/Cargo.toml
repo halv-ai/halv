@@ -15,9 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 # The sealed secret file on Windows (src/secret_store.rs). snow already builds it.
-chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 futures-util = "0.3"
@@ -33,12 +33,12 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 portable-pty = "0.9.0"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
-rand = "0.9.4"
+rand = "0.10.3"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tar = "0.4"
 tauri = { version = "2", features = ["image-png", "tray-icon", "macos-private-api", "unstable"] }
@@ -48,8 +48,8 @@ tauri-plugin-opener = "2.5.4"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-updater = "2.10.1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
-tokio-tungstenite = "0.27"
-toml = "0.9.12"
+tokio-tungstenite = "0.30"
+toml = "1.1.2"
 url = "2.5.8"
 zeroize = "1.8.2"
 
