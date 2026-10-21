@@ -50,9 +50,12 @@ import { setNotificationPreferencesCache } from "../notifications";
 import {
   DEFAULT_CATALOG,
   DEFAULT_TIER_AGENTS,
+  routingCloudCardPlacement,
+  taskRoutingPreferenceAfterToggle,
   type LadderTier,
   type TierAgentAssignment,
 } from "../taskRouting";
+import { cloudAccess } from "../halvCloud.ts";
 import { themePreferences, type ThemePreference } from "../theme";
 import { localeDefinitions } from "../i18n/config";
 import type { LanguagePreference } from "../i18n/language";
@@ -80,7 +83,11 @@ import type {
 import { useBillingCheckout } from "../useBillingCheckout";
 import { SavingsDashboard } from "./SavingsDashboard";
 import { LifetimeOffer } from "./LifetimeOffer";
-import { AnonymousUsagePreference } from "./AnonymousUsagePreference";
+import {
+  AnonymousUsagePreference,
+  ConsentDetails,
+} from "./AnonymousUsagePreference";
+import { HalvCloudCard } from "./HalvCloudCard";
 
 const HEADROOM_INSTALL_COMMAND = 'pipx install "headroom-ai[proxy]"';
 const HEADROOM_PIP_FALLBACK_COMMAND =
@@ -114,6 +121,8 @@ type SettingsPanelProps = {
   onAccountSignOut: () => Promise<void>;
   onAccountRefresh: () => Promise<void>;
   onAccountStatusChange: (status: AccountAuthStatus) => void;
+  /** Opens the Halv sign-in from a Halv Cloud card (ADR 0021). */
+  onHalvSignIn: () => void;
   onLoginChatGpt: () => Promise<void>;
   onLogout: () => Promise<void>;
   onRestartSidecar: () => Promise<void>;
@@ -144,6 +153,7 @@ export function SettingsPanel({
   onAccountSignOut,
   onAccountRefresh,
   onAccountStatusChange,
+  onHalvSignIn,
   onLoginChatGpt,
   onLogout,
   onRestartSidecar,
@@ -296,6 +306,20 @@ export function SettingsPanel({
   const [taskRoutingError, setTaskRoutingError] = useState<string | null>(null);
   const [taskRoutingNotice, setTaskRoutingNotice] = useState<string | null>(null);
   const [workflowRouting, setWorkflowRouting] = useState(true);
+  // "Keep going without it" hides the Halv Cloud card for one visit of the
+  // routing section (ADR 0021). A new visit shows the card again.
+  const [routingCloudDismissed, setRoutingCloudDismissed] = useState(false);
+  const routingSectionOpen = open && activeCategory === "jev";
+  // The Halv Cloud card in Account & plan mounts only while the section
+  // shows, so `trial_prompted` counts a card that the user saw.
+  const [accountCloudDismissed, setAccountCloudDismissed] = useState(false);
+  const accountSectionOpen = open && activeCategory === "account";
+  useEffect(() => {
+    if (accountSectionOpen) setAccountCloudDismissed(false);
+  }, [accountSectionOpen]);
+  useEffect(() => {
+    if (routingSectionOpen) setRoutingCloudDismissed(false);
+  }, [routingSectionOpen]);
   const [claudeUltracode, setClaudeUltracode] = useState(false);
   const [workflowSavePending, setWorkflowSavePending] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
@@ -977,9 +1001,15 @@ export function SettingsPanel({
     setTaskRoutingSavePending(true);
     setTaskRoutingError(null);
     setTaskRoutingNotice(null);
+    // Turning routing on shows the Halv Cloud card again, also after a
+    // dismissal of the section card.
+    if (nextEnabled) setRoutingCloudDismissed(false);
     try {
       const preferences = await ipc.preferences.setTaskRouting({
-        taskRouting: nextEnabled,
+        taskRouting: taskRoutingPreferenceAfterToggle(
+          nextEnabled,
+          halvCloudAccess,
+        ),
       });
       setTaskRouting(preferences.taskRouting);
       setTaskRoutingNotice(
@@ -1415,6 +1445,30 @@ export function SettingsPanel({
   );
   const account = status.account;
   const accountEntitlements = account?.entitlements ?? null;
+  const halvCloudAccess = cloudAccess(account);
+  const accountSignedIn = account?.signedIn === true;
+  const routingCloudCard = routingCloudCardPlacement({
+    // The section stays mounted while hidden. The card mounts only in a
+    // visit, so `trial_prompted` counts a card that the user saw.
+    ready:
+      routingSectionOpen &&
+      account !== null &&
+      preferencesLoadState === "loaded",
+    access: halvCloudAccess,
+    routingOn: taskRouting,
+    dismissedThisVisit: routingCloudDismissed,
+  });
+  const routingCloudCardElement = (
+    <HalvCloudCard
+      access={halvCloudAccess}
+      account={account}
+      feature="routing"
+      onDismiss={() => setRoutingCloudDismissed(true)}
+      onSignIn={onHalvSignIn}
+      onStatusChange={onAccountStatusChange}
+      placement="inline"
+    />
+  );
   const accountReferral =
     account?.referral ?? accountEntitlements?.referral ?? null;
   const accountPlan = account?.plan ?? accountEntitlements?.plan;
@@ -1592,13 +1646,51 @@ export function SettingsPanel({
               <p className="mt-1 text-xs text-content-muted">
                 {t("Your Halv license")}
               </p>
-              <p className="mt-2 text-sm text-content-secondary">
-                {account?.email ?? t("Signed in")}
-              </p>
-              <p className="mt-1 text-xs text-content-muted">
-                {accountPlanSummary}
-              </p>
+              {accountSignedIn ? (
+                <>
+                  <p className="mt-2 text-sm text-content-secondary">
+                    {account?.email ?? t("Signed in")}
+                  </p>
+                  <p className="mt-1 text-xs text-content-muted">
+                    {accountPlanSummary}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-2 text-sm text-content-secondary">
+                    {t("Not signed in")}
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-content-muted">
+                    {t(
+                      "Everything on this computer is free and needs no account. Sign in to use Halv Cloud: task routing, automatic account rotation and a synced savings dashboard.",
+                    )}
+                  </p>
+                  <button
+                    className="mt-3 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-contrast transition-colors duration-150 hover:bg-accent-strong focus:outline-none focus:ring-2 focus:ring-accent/40"
+                    onClick={onHalvSignIn}
+                    type="button"
+                  >
+                    {t("Sign in to Halv")}
+                  </button>
+                </>
+              )}
             </div>
+
+            {accountSignedIn &&
+            accountSectionOpen &&
+            !accountCloudDismissed &&
+            !halvCloudAccess.granted &&
+            halvCloudAccess.reason === "no_plan" ? (
+              <HalvCloudCard
+                access={halvCloudAccess}
+                account={account}
+                onAccountRefresh={onAccountRefresh}
+                onDismiss={() => setAccountCloudDismissed(true)}
+                onSignIn={onHalvSignIn}
+                onStatusChange={onAccountStatusChange}
+                placement="inline"
+              />
+            ) : null}
 
             {paymentIssue ? (
               <div className="rounded-md border border-warning/35 bg-warning-surface/45 px-3 py-3">
@@ -1621,7 +1713,10 @@ export function SettingsPanel({
               </div>
             ) : null}
 
-            <LifetimeOffer account={account ?? null} checkout={checkout} />
+            {accountSignedIn ? (
+              <LifetimeOffer account={account ?? null} checkout={checkout} />
+            ) : null}
+            {accountSignedIn ? (
             <div className="flex flex-wrap gap-2">
               <button
                 className="rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1656,6 +1751,7 @@ export function SettingsPanel({
                 </button>
               ) : null}
             </div>
+            ) : null}
 
             {billingCancellationAvailable ? (
               <div>
@@ -2008,6 +2104,9 @@ export function SettingsPanel({
 
           <section className="space-y-3" hidden={activeCategory !== "connections"}>
             {activeCategory === "connections" ? <SettingsConnections
+              account={account}
+              onAccountStatusChange={onAccountStatusChange}
+              onHalvSignIn={onHalvSignIn}
               chatGptConnected={chatGptConnected}
               chatGptPending={loginPending}
               logoutPending={logoutPending}
@@ -2504,6 +2603,7 @@ export function SettingsPanel({
                 {taskRouting ? t("On") : t("Off")}
               </span>
             </button>
+            {routingCloudCard === "toggle" ? routingCloudCardElement : null}
             {taskRoutingError ? (
               <p className="text-xs text-danger" role="alert">
                 {taskRoutingError}
@@ -2798,30 +2898,22 @@ export function SettingsPanel({
               </h4>
               <p className="mt-1 text-sm text-content-secondary">
                 {t(
-                  "Setup and usage milestones, app version, OS, and a random install ID. No prompts, code, emails, or file paths.",
+                  "Halv sends usage events only if you turn them on. They never include prompts, code, file names, or account emails.",
                 )}
               </p>
               <div className="mt-3 rounded-md border border-surface-border/30 px-3 py-2">
                 <AnonymousUsagePreference description={false} />
               </div>
-              <details className="mt-2 text-xs text-content-muted">
-                <summary className="w-fit cursor-pointer font-medium text-content-secondary hover:text-content-primary">
-                  {t("What is sent")}
-                </summary>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  <li>{t("Installed")}</li>
-                  <li>{t("CLI connected")}</li>
-                  <li>{t("First saving")}</li>
-                  <li>{t("Trial started")}</li>
-                  <li>{t("Paid")}</li>
-                </ul>
-                <p className="mt-2">
-                  {t("Install id")}: {" "}
-                  <code className="break-all font-mono text-content-secondary">
-                    {installId ?? t("Unavailable")}
-                  </code>
-                </p>
-              </details>
+              <div className="mt-2">
+                <ConsentDetails>
+                  <p>
+                    {t("Install id")}: {" "}
+                    <code className="break-all font-mono text-content-secondary">
+                      {installId ?? t("Unavailable")}
+                    </code>
+                  </p>
+                </ConsentDetails>
+              </div>
               <details className="mt-2 text-xs text-content-muted">
                 <summary className="w-fit cursor-pointer font-medium text-content-secondary hover:text-content-primary">
                   {t("What a support report includes")}

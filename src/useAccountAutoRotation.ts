@@ -1,9 +1,11 @@
 // Runs the opt-in automatic rotation of Claude accounts (ADR 0017). The
 // decisions are in accountAutoRotation.ts. This hook reads the stores,
 // switches through the normal select path, and keeps the result for the
-// card above the status bar.
+// card above the status bar. The rotation is part of Halv Cloud (ADR 0021).
+// Without access, the hook does nothing and shows no notice.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  autoRotationActive,
   autoRotationSetting,
   autoRotationTarget,
   claudePanesBusy,
@@ -21,6 +23,7 @@ import { accountRestartStore } from "./accountRestart.ts";
 import type { AccountSwapReading } from "./accountSwap.ts";
 import { activeWalletAccount, walletStore } from "./accountWallet.ts";
 import { agentSessionStore } from "./agentSessions.ts";
+import type { CloudAccess } from "./halvCloud.ts";
 import { ipc } from "./ipc.ts";
 import type { ProviderPlanWindow } from "./providerPlanWindows.ts";
 import { terminalActivityStore } from "./terminalActivityStore.ts";
@@ -40,6 +43,9 @@ export type AutoRotationNotice =
 
 export type AutoRotationState = {
   settings: AutoRotationSettings;
+  // True when the setting is on and the account has Halv Cloud access.
+  // Only then does Halv switch without a click.
+  active: boolean;
   // True while the rotation found no target in this crossing. The
   // assisted card then offers a switch.
   fallback: boolean;
@@ -71,6 +77,7 @@ export function useAccountAutoRotation({
   windows,
   loaded,
   nowMs,
+  cloudAccess,
 }: {
   // The Claude reading of the assisted card: only usage that belongs to
   // the active account.
@@ -79,6 +86,8 @@ export function useAccountAutoRotation({
   windows: readonly ProviderPlanWindow[];
   loaded: boolean;
   nowMs: number;
+  // Halv Cloud access of the signed-in account (ADR 0021).
+  cloudAccess: Pick<CloudAccess, "granted">;
 }): AutoRotationState {
   const settings = useSyncExternalStore(
     autoRotationSetting.subscribe,
@@ -100,17 +109,21 @@ export function useAccountAutoRotation({
   inputRef.current = { reading, windows };
   const [fallback, setFallback] = useState(false);
   const [notice, setNotice] = useState<AutoRotationNotice | null>(null);
+  const active = autoRotationActive(settings, cloudAccess);
+  // A switch that started before the access ended must not finish.
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
-    if (settings.enabled) return;
+    if (active) return;
     watchRef.current = INITIAL_AUTO_ROTATION_WATCH;
     quietRef.current = false;
     setFallback(false);
     setNotice(null);
-  }, [settings.enabled]);
+  }, [active]);
 
   useEffect(() => {
-    if (!loaded || !settings.enabled) return;
+    if (!loaded || !active) return;
     const current = inputRef.current.reading;
     const step = nextAutoRotationStep(watchRef.current, {
       ...current,
@@ -127,7 +140,7 @@ export function useAccountAutoRotation({
     if (step.rotate && current.usedPercent !== null) {
       void rotate(current.accountKey, current.usedPercent, settings.startPercent);
     }
-  }, [busy, loaded, nowMs, reading.accountKey, reading.usedPercent, settings]);
+  }, [active, busy, loaded, nowMs, reading.accountKey, reading.usedPercent, settings]);
 
   async function rotate(accountKey: string, usedPercent: number, startPercent: number) {
     const finish = (outcome: Parameters<typeof finishAutoRotation>[2]) => {
@@ -141,9 +154,9 @@ export function useAccountAutoRotation({
         walletStore.getSnapshot().state.store === "orca"
           ? await ipc.wallet.usage().catch(() => [])
           : [];
-      // The active account can change while the usage loads.
+      // The active account, or the access, can change while the usage loads.
       const state = walletStore.getSnapshot().state.claude;
-      if (state.activeId !== accountKey) return finish("cancelled");
+      if (state.activeId !== accountKey || !activeRef.current) return finish("cancelled");
       const nowMs = Date.now();
       const target = autoRotationTarget({
         state,
@@ -175,8 +188,9 @@ export function useAccountAutoRotation({
 
   return {
     settings,
-    fallback,
-    notice,
+    active,
+    fallback: active && fallback,
+    notice: active ? notice : null,
     dismiss() {
       if (notice?.kind === "failed") quietRef.current = true;
       setNotice(null);

@@ -1095,33 +1095,10 @@ impl SidecarManager {
         self.ensure_ready_locked().await
     }
 
+    /// Always false: the Headroom proxy never pauses for the plan of the
+    /// account (ADR 0021).
     pub fn optimization_paused(&self) -> bool {
         self.inner.optimization_paused.load(Ordering::SeqCst)
-    }
-
-    /// Update Headroom's desired optimization mode. A running proxy is
-    /// restarted under the existing lifecycle lock so subsequent requests use
-    /// the new mode. Before initial startup, this only seeds the desired mode.
-    pub async fn set_optimization_paused(&self, paused: bool) -> Option<SidecarStatus> {
-        let _guard = self.inner.op_lock.lock().await;
-        let previous = self
-            .inner
-            .optimization_paused
-            .swap(paused, Ordering::SeqCst);
-        if previous == paused {
-            return None;
-        }
-
-        let current = self.current_status();
-        if matches!(current, SidecarStatus::Starting { .. }) && !self.has_managed_child_slot() {
-            return Some(current);
-        }
-
-        self.cancel_auto_heal_task();
-        eprintln!(
-            "managed proxy restarting: optimization_paused -> {paused} (in-memory engine metrics reset)"
-        );
-        Some(self.restart_locked().await)
     }
 
     /// Start the immutable Headroom runtime shipped in this Halv build. The
@@ -3480,6 +3457,14 @@ fn spawn_headroom_proxy_with_log_limit(
     })
 }
 
+/// The variables that turn off the telemetry and the update check of the
+/// bundled Headroom proxy.
+const HEADROOM_PRIVACY_ENV: [(&str, &str); 3] = [
+    ("HEADROOM_BEACON", "off"),
+    ("DO_NOT_TRACK", "1"),
+    ("HEADROOM_UPDATE_CHECK", "off"),
+];
+
 fn headroom_proxy_command(
     binary_path: &Path,
     port: u16,
@@ -3510,6 +3495,9 @@ fn headroom_proxy_command(
             crate::exec::rtk_database_path(),
         )
         .env("RTK_TELEMETRY_DISABLED", "1")
+        // Halv sends no usage data without consent (ADR 0021), so the proxy
+        // never uploads its own telemetry or checks for updates.
+        .envs(HEADROOM_PRIVACY_ENV.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -3744,6 +3732,26 @@ mod tests {
     }
 
     #[test]
+    fn managed_proxy_command_turns_off_headroom_telemetry() {
+        let command = headroom_proxy_command(
+            Path::new("headroom"),
+            DEFAULT_PORT,
+            Some(Path::new("app-data")),
+            false,
+            None,
+        );
+        let env_value = |key: &str| {
+            command
+                .get_envs()
+                .find_map(|(name, value)| (name == OsStr::new(key)).then_some(value).flatten())
+        };
+        assert_eq!(env_value("HEADROOM_BEACON"), Some(OsStr::new("off")));
+        assert_eq!(env_value("DO_NOT_TRACK"), Some(OsStr::new("1")));
+        assert_eq!(env_value("HEADROOM_UPDATE_CHECK"), Some(OsStr::new("off")));
+        assert_eq!(env_value("RTK_TELEMETRY_DISABLED"), Some(OsStr::new("1")));
+    }
+
+    #[test]
     fn managed_proxy_command_sets_managed_sidecar_marker() {
         let app_data_dir = PathBuf::from("app-data");
         let command = headroom_proxy_command(
@@ -3895,27 +3903,6 @@ mod tests {
             "headroom {}",
             arguments.join(" ")
         )));
-    }
-
-    #[tokio::test]
-    async fn optimization_mode_can_be_seeded_before_proxy_startup() {
-        let manager = SidecarManager::new(DEFAULT_PORT);
-        assert!(!manager.optimization_paused());
-
-        let status = manager
-            .set_optimization_paused(true)
-            .await
-            .expect("mode flip should report the current sidecar status");
-        assert!(matches!(status, SidecarStatus::Starting { .. }));
-        assert!(manager.optimization_paused());
-        assert!(manager.set_optimization_paused(true).await.is_none());
-
-        let status = manager
-            .set_optimization_paused(false)
-            .await
-            .expect("reverse mode flip should report the current sidecar status");
-        assert!(matches!(status, SidecarStatus::Starting { .. }));
-        assert!(!manager.optimization_paused());
     }
 
     #[test]

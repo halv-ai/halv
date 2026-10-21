@@ -1,10 +1,66 @@
 import { useT } from "../i18n/runtime";
-import { AnonymousUsagePreference } from "./AnonymousUsagePreference";
+import { ConsentCard } from "./AnonymousUsagePreference";
 
 type WelcomeScreenProps = {
   onGetStarted: () => void;
   onSkip: () => void;
 };
+
+// ADR 0021: the welcome screen names the free side and Halv Cloud once.
+// It is information only. It has no button, and nothing here blocks the CTA.
+// The first-run card shows the same block once when the welcome screen did
+// not show, for example when a Claude or Codex CLI is already connected.
+export function HalvPlans() {
+  const t = useT();
+  const plans = [
+    {
+      id: "free",
+      title: t("Free, on your machine"),
+      lines: [
+        t("Headroom proxy and its savings"),
+        t("RTK and crux"),
+        t("Terminals, tabs, and projects"),
+        t("Local savings meter"),
+      ],
+    },
+    {
+      id: "cloud",
+      title: t("Halv Cloud"),
+      lines: [
+        t("Task routing to the cheapest capable model"),
+        t("Automatic account rotation"),
+        t("Cloud savings dashboard"),
+        t("7-day trial, offered after your first result"),
+      ],
+    },
+  ];
+  return (
+    <div className="welcome-plans mt-5 grid max-w-[460px] gap-3 sm:grid-cols-2">
+      {plans.map((plan) => (
+        <section
+          aria-labelledby={`welcome-plan-${plan.id}`}
+          className="welcome-plan rounded-xl border border-surface-border/25 bg-surface-panel px-3.5 py-3"
+          key={plan.id}
+        >
+          <h2
+            className="text-xs font-semibold text-content-primary"
+            id={`welcome-plan-${plan.id}`}
+          >
+            {plan.title}
+          </h2>
+          <ul className="mt-2 space-y-1 text-xs leading-5 text-content-muted">
+            {plan.lines.map((line) => (
+              <li className="flex gap-2" key={line}>
+                <span aria-hidden="true" className="text-accent">·</span>
+                {line}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
 
 export function WelcomeScreen({ onGetStarted, onSkip }: WelcomeScreenProps) {
   const t = useT();
@@ -49,18 +105,15 @@ export function WelcomeScreen({ onGetStarted, onSkip }: WelcomeScreenProps) {
               <span aria-hidden="true">→</span>
             </button>
             <p className="mt-3 text-xs text-content-muted">
-              {t("Try your first task before creating a Halv account.")}
+              {t("You need no Halv account to start.")}
             </p>
             <ul className="mt-5 max-w-sm space-y-1.5 text-xs leading-5 text-content-muted">
               <li className="flex gap-2">
                 <span aria-hidden="true" className="text-accent">·</span>
                 {t("You need a ChatGPT or Claude plan, or an API key. Halv does not sell model access.")}
               </li>
-              <li className="flex gap-2">
-                <span aria-hidden="true" className="text-accent">·</span>
-                {t("A Halv account comes after your first result. The 7-day trial asks for a card.")}
-              </li>
             </ul>
+            <HalvPlans />
             <button
               className="mt-5 rounded text-xs text-content-secondary underline underline-offset-4 hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
               onClick={onSkip}
@@ -120,7 +173,7 @@ export function WelcomeScreen({ onGetStarted, onSkip }: WelcomeScreenProps) {
           </div>
         </div>
         <div className="mt-10 max-w-[580px] border-t border-surface-border/20 pt-5">
-          <AnonymousUsagePreference />
+          <ConsentCard variant="ask" />
         </div>
       </section>
     </main>

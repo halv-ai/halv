@@ -1,3 +1,4 @@
+import type { CloudAccess } from "./halvCloud.ts";
 import type { RouteDecision } from "./types";
 
 export type Lane = "claude" | "codex";
@@ -679,4 +680,48 @@ export function agentOpts(result: RoutingResult): AgentOpts {
   if (result.model) opts.model = result.model;
   if (result.effort) opts.effort = result.effort;
   return opts;
+}
+
+/**
+ * Where the routing section of Settings shows the Halv Cloud card (ADR 0021).
+ * Task routing runs on Halv Cloud. Without access, the toggle keeps the
+ * choice of the user, and the router falls back to the coordinator model.
+ *
+ * - "toggle": routing is on, so the card sits under the toggle.
+ * - null: routing is off, the account has access, the status is not loaded
+ *   yet, or the user chose "Keep going without it" in this visit of the
+ *   section. The card is a point-of-use offer, so it never shows while
+ *   routing is off.
+ */
+export type RoutingCloudCardPlacement = "toggle" | null;
+
+export function routingCloudCardPlacement({
+  ready,
+  access,
+  routingOn,
+  dismissedThisVisit,
+}: {
+  // False until the account status and the preferences load. The card then
+  // does not flash for an account that has access, or jump between places.
+  ready: boolean;
+  access: Pick<CloudAccess, "granted">;
+  routingOn: boolean;
+  dismissedThisVisit: boolean;
+}): RoutingCloudCardPlacement {
+  if (!ready || !routingOn || access.granted || dismissedThisVisit) {
+    return null;
+  }
+  return "toggle";
+}
+
+/**
+ * The value that Settings saves when the user flips the routing toggle. The
+ * choice of the user always wins: missing Halv Cloud access never turns
+ * routing off. The card explains what runs until the user starts a plan.
+ */
+export function taskRoutingPreferenceAfterToggle(
+  requested: boolean,
+  _access: Pick<CloudAccess, "granted">,
+) {
+  return requested;
 }

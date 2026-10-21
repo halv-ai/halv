@@ -2,7 +2,8 @@
 // card sits above the provider pills of the status bar. One click switches
 // through the normal select path. The card never switches without that
 // click. The opt-in automatic rotation of Claude accounts (ADR 0017) shows
-// its result in a card at the same place.
+// its result in a card at the same place. The rotation runs only with Halv
+// Cloud access (ADR 0021). Without it, the assisted card works as before.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { assistedSwapInput } from "../accountAutoRotation";
 import {
@@ -22,6 +23,8 @@ import {
   walletStore,
   type WalletProvider,
 } from "../accountWallet";
+import { accountStatusStore } from "../gate";
+import { cloudAccess } from "../halvCloud.ts";
 import { formatNumber, useT } from "../i18n/runtime";
 import { ipc } from "../ipc.ts";
 import type { ProviderPlanWindowGroup } from "../providerPlanWindows";
@@ -81,13 +84,21 @@ export function AccountSwapNotice({
     };
   });
   const claudeReading = readings.find((reading) => reading.provider === "claude")!;
+  const account = useSyncExternalStore(
+    accountStatusStore.subscribe,
+    accountStatusStore.getSnapshot,
+    accountStatusStore.getSnapshot,
+  );
   const autoRotation = useAccountAutoRotation({
     reading: claudeReading,
     windows: groups.find((group) => group.id === "claude")?.windows ?? [],
     loaded: wallet.loaded,
     nowMs,
+    cloudAccess: cloudAccess(account),
   });
-  const autoEnabled = autoRotation.settings.enabled;
+  // A rotation that is on without Halv Cloud access does not switch, so the
+  // assisted Claude card keeps its normal threshold.
+  const autoEnabled = autoRotation.active;
   // With automatic rotation on, the Claude card shows only when the
   // rotation found no target.
   const assisted = readings.map((reading) => {

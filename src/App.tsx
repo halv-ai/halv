@@ -1,7 +1,10 @@
 import { DotPanel } from "./components/DotPanel";
 import { stopTerminalSessionForTabClose } from "./terminalClose";
 import { terminalDraftBridge, TerminalDraftError } from "./terminalDraft";
-import { useAnonymousUsagePreference } from "./components/AnonymousUsagePreference";
+import {
+  ConsentAskBanner,
+  useAnonymousUsagePreference,
+} from "./components/AnonymousUsagePreference";
 import { ipc, type UnlistenFn } from "./ipc.ts";
 import { openExternalLink } from "./externalLinks.ts";
 import {
@@ -86,15 +89,11 @@ import {
 } from "./conversationMode";
 import { appUpdateStore } from "./appUpdateStore";
 import {
-  analyticsEventsForState,
+  analyticsEventsWithConsent,
   flushAnalytics,
   recordAnalyticsEvent,
   type AnalyticsState,
 } from "./analytics";
-import {
-  paymentIssueMessage,
-  shouldPromptForPaymentIssue,
-} from "./billingIssue";
 import { AutomationsPanel } from "./components/AutomationsPanel";
 import { BrowserPanel } from "./components/BrowserPanel";
 import { ChatComposer } from "./components/ChatComposer";
@@ -114,7 +113,7 @@ import {
   PreparedFirstTask,
 } from "./components/FirstRunCard";
 import { WelcomeScreen } from "./components/WelcomeScreen";
-import { TrialPromptCard } from "./components/TrialPromptCard";
+import { HalvCloudCard } from "./components/HalvCloudCard";
 import { TrialGoalCard } from "./components/TrialGoalCard";
 import { notify, notifyTerminalPane } from "./notifications";
 import { confirmDialog, promptDialog } from "./dialogs";
@@ -164,7 +163,6 @@ import type { SettingsConnectionsRequest } from "./components/SettingsConnection
 import type { WalletProvider } from "./accountWallet";
 import { useWalletSnapshot } from "./components/AccountWallet";
 import { TaskFindBar } from "./components/TaskFindBar";
-import { VerificationGate } from "./components/VerificationGate";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import {
   commandDescriptionLabel,
@@ -193,16 +191,12 @@ import {
   latestUserForkSequence as resolveLatestUserForkSequence,
   userMessageForkSequence,
 } from "./forkConversation";
-import {
-  gateDecision,
-  paywallDismissable,
-  verificationGateReason,
-} from "./gate";
+import { accountStatusStore, gateDecision } from "./gate";
+import { cloudAccess } from "./halvCloud.ts";
 import {
   lastTurnSavingsPercent,
   readFirstResultSeen,
   trialGoalProgress,
-  trialPromptFacts,
   valueDelivered,
   writeFirstResultSeen,
 } from "./activation";
@@ -219,13 +213,24 @@ import {
   onboardingReplayEnabled,
   onboardingPayoffCopy,
   readWelcomeSeen,
+  readCloudInfoSeen,
+  readConsentBannerShown,
   readOnboardingPreference,
+  shouldShowConsentBanner,
   shouldShowWelcomeScreen,
+  writeCloudInfoSeen,
+  writeConsentBannerShown,
   writeWelcomeSeen,
   writeOnboardingPreference,
   type OnboardingPreference,
 } from "./onboarding";
-import { trialGateForSend } from "./trialPrompt";
+import {
+  cloudPitchVisible,
+  readCloudPitchDismissed,
+  readCloudPitchShown,
+  writeCloudPitchDismissed,
+  writeCloudPitchShown,
+} from "./trialPrompt";
 import {
   pinnedProjectIdForQueuedInput,
   requestProjectIdForInput,
@@ -927,7 +932,6 @@ function App() {
     "account" | "paywall" | null
   >(null);
   const analyticsPreviousStateRef = useRef<AnalyticsState | null>(null);
-  const paymentIssuePromptedRef = useRef<string | null>(null);
   const [gateNowMs, setGateNowMs] = useState(() => Date.now());
   const [connectGateState, setConnectGateState] =
     useState<ConnectGateState>("resolving");
@@ -1134,7 +1138,26 @@ function App() {
   const [onboardingPreference, setOnboardingPreference] =
     useState<OnboardingPreference>(readOnboardingPreference);
   const [welcomeSeen, setWelcomeSeen] = useState(readWelcomeSeen);
-  const [trialPromptOpen, setTrialPromptOpen] = useState(false);
+  // The Halv Cloud pitch after the first result (ADR 0021). Its dismissal
+  // is permanent.
+  const [cloudPitchDismissed, setCloudPitchDismissed] = useState(() =>
+    ONBOARDING_REPLAY_ENABLED ? false : readCloudPitchDismissed(),
+  );
+  // The pitch card and the consent banner each show on one launch only.
+  // App reads the flags once at launch, so a card that shows in this
+  // launch stays until the user answers or the launch ends.
+  const [cloudPitchShownOnEarlierLaunch] = useState(() =>
+    ONBOARDING_REPLAY_ENABLED ? false : readCloudPitchShown(),
+  );
+  const [consentBannerShownOnEarlierLaunch] = useState(() =>
+    ONBOARDING_REPLAY_ENABLED ? false : readConsentBannerShown(),
+  );
+  // The Halv Cloud information block shows once: on the welcome screen, or
+  // in the first-run card when the welcome screen did not show.
+  const [cloudInfoSeenOnEarlierLaunch] = useState(() =>
+    ONBOARDING_REPLAY_ENABLED ? false : readCloudInfoSeen(),
+  );
+  const [welcomeShownThisLaunch, setWelcomeShownThisLaunch] = useState(false);
   const [guidedTaskPhase, setGuidedTaskPhase] =
     useState<GuidedTaskPhase>("idle");
   const [guidedTaskCancelled, setGuidedTaskCancelled] = useState(false);
@@ -1166,7 +1189,6 @@ function App() {
     ONBOARDING_REPLAY_ENABLED ? false : readFirstResultSeen(),
   );
   const firstResultSeenRef = useRef(firstResultSeen);
-  const [paywallDismissed, setPaywallDismissed] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   // The Projects tree shows its empty state only after the first load.
   const [projectsLoaded, setProjectsLoaded] = useState(false);
@@ -4626,52 +4648,8 @@ function App() {
     setGateNowMs(Date.now());
   }, [status.account]);
 
-  useEffect(() => {
-    const account = status.account;
-    const entitlements = account?.entitlements;
-    const paymentIssue = entitlements?.paymentIssue ?? null;
-    if (!account?.signedIn || !entitlements || !paymentIssue) {
-      paymentIssuePromptedRef.current = null;
-      return;
-    }
-    if (
-      !shouldPromptForPaymentIssue(
-        paymentIssue,
-        entitlements.canUseApp,
-        Boolean(account.stale),
-      )
-    ) {
-      return;
-    }
-
-    const promptKey = `${account.email ?? "signed-in"}:${paymentIssue}`;
-    if (paymentIssuePromptedRef.current === promptKey) {
-      return;
-    }
-    paymentIssuePromptedRef.current = promptKey;
-
-    let active = true;
-    void confirmDialog({
-      title: tRef.current("Payment needs attention"),
-      message: paymentIssueMessage(paymentIssue, tRef.current),
-      confirmLabel: tRef.current("Fix payment"),
-      cancelLabel: tRef.current("Not now"),
-    }).then((fixPayment) => {
-      if (active && fixPayment) {
-        setAccountFlowOpen("paywall");
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [
-    status.account?.email,
-    status.account?.entitlements?.canUseApp,
-    status.account?.entitlements?.paymentIssue,
-    status.account?.signedIn,
-    status.account?.stale,
-  ]);
+  // A payment issue never opens a modal (ADR 0021). Settings > Account
+  // shows the inline payment card with the "Fix payment" button.
 
   async function refreshStatus(
     read: Promise<StatusState> = readStatusState(),
@@ -6068,7 +6046,6 @@ function App() {
   }
 
   function handleAccountStatusChange(account: AccountAuthStatus) {
-    if (!account.signedIn) setPaywallDismissed(false);
     setAccountFlowOpen((current) =>
       current === "paywall" && account.entitlements?.paymentIssue
         ? current
@@ -7526,11 +7503,7 @@ function App() {
       guidedTerminalSawSustainedOutputRef.current = false;
     }
     const targetConversationId = conversationTargetForNewInput();
-    const gate = sendGate();
-    if (gate) {
-      openSendGate(gate);
-      return;
-    }
+    // A send never waits for an account (ADR 0021).
     void recordAnalyticsEvent("active_day");
     // The funnel counts the first task on any path (native dedupes it).
     void recordAnalyticsEvent("first_task_started");
@@ -8631,8 +8604,6 @@ function App() {
     setDraftFastMode(defaults.fastMode);
     setTaskFindOpen(false);
     setChatError(null);
-    const gate = sendGate();
-    if (gate) openSendGate(gate);
   }
 
   function startNewConversation() {
@@ -10051,10 +10022,6 @@ function App() {
   );
   useEffect(
     function recordFunnelEventsForStateChange() {
-      if (anonymousUsagePreference.enabled !== true) {
-        analyticsPreviousStateRef.current = null;
-        return;
-      }
       const nextState: AnalyticsState = {
         // ChatGPT OAuth and pasted API keys count as a connected account too.
         accountConnected:
@@ -10065,19 +10032,21 @@ function App() {
         paymentConfirmed: status.account?.entitlements?.paymentConfirmed === true,
         signedIn: status.account?.signedIn ?? false,
       };
-      const previousState = analyticsPreviousStateRef.current;
-      const events = analyticsEventsForState(previousState, nextState);
-      analyticsPreviousStateRef.current = nextState;
-
-      if (previousState === null) {
-        void recordAnalyticsEvent("first_open");
-      }
+      // `first_open` waits for consent "on" (ADR 0021). The native queue
+      // drops events while the answer is unset, so the first state after
+      // a yes records `first_open` again.
+      const { events, state } = analyticsEventsWithConsent(
+        anonymousUsagePreference.consent,
+        analyticsPreviousStateRef.current,
+        nextState,
+      );
+      analyticsPreviousStateRef.current = state;
       for (const event of events) {
         void recordAnalyticsEvent(event);
       }
     },
     [
-      anonymousUsagePreference.enabled,
+      anonymousUsagePreference.consent,
       composerConnections,
       status.account?.entitlements?.trialConfirmed,
       status.account?.entitlements?.paymentConfirmed,
@@ -10116,13 +10085,6 @@ function App() {
     onboardingCompleted: onboardingPreference === "completed",
     tokensSaved: savingsTotals?.tokensSaved ?? 0,
   });
-  const trialCardFacts = trialPromptFacts({
-    conversations: conversations.filter(
-      (conversation) => conversation.messageCount > 0,
-    ).length,
-    tokensSaved: savingsTotals?.tokensSaved ?? 0,
-    dollarsUsd: savingsTotals?.dollarsUsd ?? 0,
-  });
   const firstResultCelebration =
     (todaySavings?.tokensSaved ?? 0) > 0
       ? {
@@ -10153,25 +10115,43 @@ function App() {
           }),
     [dailyTokenActivity, gateNowMs, trialEndSeconds],
   );
-  // The send gates (ADR 0018): the trial card after the first result for
-  // an anonymous user, the paywall for an account without app access.
-  function sendGate(): "trial" | "paywall" | null {
-    const signedIn = ONBOARDING_REPLAY_ENABLED
-      ? false
-      : (status.account?.signedIn ?? false);
-    if (
-      trialGateForSend({ signedIn, valueDelivered: anonymousValueDelivered })
-    ) {
-      return "trial";
-    }
-    if (signedIn && status.account?.entitlements?.canUseApp === false) {
-      return "paywall";
-    }
-    return null;
-  }
-  function openSendGate(gate: "trial" | "paywall") {
-    if (gate === "trial") setTrialPromptOpen(true);
-    else setAccountFlowOpen("paywall");
+  // Halv Cloud access of this install (ADR 0021). The onboarding replay
+  // behaves like a signed-out install.
+  const halvCloudAccess = cloudAccess(
+    ONBOARDING_REPLAY_ENABLED ? null : status.account,
+  );
+  // The status bar cards read the account outside the props tree.
+  useEffect(() => {
+    accountStatusStore.publish(
+      ONBOARDING_REPLAY_ENABLED ? null : status.account,
+    );
+  }, [status.account]);
+  // Missing or old entitlements never block local work (ADR 0021). Halv
+  // refreshes them in the background until the sync succeeds.
+  const accountNeedsSync = status.account
+    ? gateDecision(status.account, gateNowMs) === "verify"
+    : false;
+  useEffect(() => {
+    if (!accountNeedsSync) return;
+    let cancelled = false;
+    const refresh = () => {
+      void ipc.auth
+        .refreshEntitlements()
+        .then((account) => {
+          if (!cancelled) setStatus((current) => ({ ...current, account }));
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [accountNeedsSync]);
+  function dismissCloudPitch() {
+    writeCloudPitchDismissed();
+    setCloudPitchDismissed(true);
   }
   const guidedTerminalConversationId = guidedTerminalConversationIdRef.current;
   const guidedTerminalStatus = guidedTerminalConversationId
@@ -10189,7 +10169,35 @@ function App() {
     guidedTaskCancelled || chatError || guidedTerminalStatus === "failed" ||
     messages.some((message) => message.role === "assistant" && message.error)
   );
-  const showTrialPrompt = workspaceView === "chat" && trialPromptOpen;
+  const guidedTaskStatusVisible =
+    guidedTaskVisible &&
+    (guidedTaskPhase === "waiting" || guidedTaskPhase === "success");
+  const welcomeScreenShown = shouldShowWelcomeScreen({
+    welcomeSeen,
+    connectionRequired: connectGateState === "required",
+    replayOnboarding: ONBOARDING_REPLAY_ENABLED,
+  });
+  // An install without a consent answer sees one banner (ADR 0021). The
+  // welcome screen and the first-task cards ask in their own place.
+  const showConsentBanner = shouldShowConsentBanner({
+    consent: anonymousUsagePreference.consent,
+    welcomeScreenShown,
+    firstTaskShown: showFirstRunCard || guidedTaskPhase === "prepared",
+    shownOnEarlierLaunch: consentBannerShownOnEarlierLaunch,
+  });
+  // The pitch waits until the first-task card and the consent banner close,
+  // so the chat column shows one card at a time. The consent banner shows
+  // on one launch only, so the pitch can show on a later launch.
+  const showCloudPitch =
+    workspaceView === "chat" &&
+    !guidedTaskStatusVisible &&
+    !showConsentBanner &&
+    cloudPitchVisible({
+      valueDelivered: anonymousValueDelivered,
+      access: halvCloudAccess,
+      dismissed: cloudPitchDismissed,
+      shownOnEarlierLaunch: cloudPitchShownOnEarlierLaunch,
+    });
 
   useEffect(() => {
     if ((guidedTaskPhase === "prepared" || guidedTaskPhase === "waiting") && status.sidecar?.state === "error") {
@@ -10198,8 +10206,19 @@ function App() {
   }, [guidedTaskPhase, status.sidecar?.state]);
 
   useEffect(() => {
-    if (showTrialPrompt) void recordAnalyticsEvent("trial_prompted");
-  }, [showTrialPrompt]);
+    if (!showCloudPitch) return;
+    writeCloudPitchShown();
+    void recordAnalyticsEvent("trial_prompted");
+  }, [showCloudPitch]);
+
+  useEffect(() => {
+    if (showConsentBanner) writeConsentBannerShown();
+  }, [showConsentBanner]);
+
+  useEffect(() => {
+    if (welcomeScreenShown) setWelcomeShownThisLaunch(true);
+    if (welcomeScreenShown || showFirstRunCard) writeCloudInfoSeen();
+  }, [welcomeScreenShown, showFirstRunCard]);
 
   useEffect(() => {
     if (guidedTaskFailed) void recordAnalyticsEvent("first_task_failed", guidedTaskCancelled ? "cancelled" : "task");
@@ -10321,8 +10340,6 @@ function App() {
     );
   }
 
-  const accountGateDecision = gateDecision(accountStatus, gateNowMs);
-
   if (accountFlowOpen === "account") {
     return (
       <AccountGate
@@ -10333,6 +10350,8 @@ function App() {
     );
   }
 
+  // The plans page opens only on a click on "Plans". It always has a way
+  // back (ADR 0021). No account state opens it alone.
   if (accountFlowOpen === "paywall") {
     return (
       <Paywall
@@ -10340,30 +10359,6 @@ function App() {
         onBack={() => setAccountFlowOpen(null)}
         onCheckoutOpened={handleTrialCheckoutOpened}
         onStatusChange={handleAccountStatusChange}
-      />
-    );
-  }
-
-  if (accountGateDecision === "paywall" && !paywallDismissed) {
-    // An account with no payment history can go back and read its chats
-    // (ADR 0018). The next send opens the paywall again.
-    const dismissable = paywallDismissable(accountStatus.entitlements);
-    return (
-      <Paywall
-        authStatus={accountStatus}
-        onBack={dismissable ? () => setPaywallDismissed(true) : undefined}
-        onCheckoutOpened={handleTrialCheckoutOpened}
-        onStatusChange={handleAccountStatusChange}
-      />
-    );
-  }
-
-  if (accountGateDecision === "verify") {
-    return (
-      <VerificationGate
-        authStatus={accountStatus}
-        onStatusChange={handleAccountStatusChange}
-        reason={verificationGateReason(accountStatus)}
       />
     );
   }
@@ -10386,11 +10381,7 @@ function App() {
     );
   }
 
-  if (shouldShowWelcomeScreen({
-    welcomeSeen,
-    connectionRequired: connectGateState === "required",
-    replayOnboarding: ONBOARDING_REPLAY_ENABLED,
-  })) {
+  if (welcomeScreenShown) {
     return (
       <WelcomeScreen
         onGetStarted={() => {
@@ -11213,8 +11204,23 @@ function App() {
           ) : null}
         </header>
 
-        {workspaceView === "chat" &&
-        guidedTaskVisible && (guidedTaskPhase === "waiting" || guidedTaskPhase === "success") ? (
+        {showConsentBanner ? <ConsentAskBanner /> : null}
+
+        {showCloudPitch ? (
+          <HalvCloudCard
+            access={halvCloudAccess}
+            account={status.account}
+            onAccountRefresh={refreshAccountEntitlements}
+            onCheckoutOpened={() => writeCloudPitchDismissed()}
+            onDismiss={dismissCloudPitch}
+            onSignIn={() => setAccountFlowOpen("account")}
+            onStatusChange={handleAccountStatusChange}
+            payoff={guidedTaskPayoff}
+            placement="pitch"
+          />
+        ) : null}
+
+        {workspaceView === "chat" && guidedTaskStatusVisible ? (
           <GuidedTaskStatus
             onDismiss={closeGuidedTaskStatus}
             terminalFollowUp={guidedTaskRunMode === "terminal" ? firstTaskFollowUp(firstTaskGoal) : undefined}
@@ -11404,11 +11410,8 @@ function App() {
                             active ? publishDiffRailPanes : undefined
                           }
                           onPromptSubmitGate={() => {
-                            const gate = sendGate();
-                            if (gate) {
-                              openSendGate(gate);
-                              return true;
-                            }
+                            // A terminal prompt never waits for an account
+                            // (ADR 0021). The callback only counts the task.
                             void recordAnalyticsEvent("active_day");
                             void recordAnalyticsEvent("first_task_started");
                             return false;
@@ -11421,7 +11424,11 @@ function App() {
                         />
                         {active ? (
                           <>
-                            <TaskBoard conversationId={conversation.id} />
+                            <TaskBoard
+                              conversationId={conversation.id}
+                              onAccountStatusChange={handleAccountStatusChange}
+                              onSignIn={() => setAccountFlowOpen("account")}
+                            />
                             <DiffRailErrorBoundary>
                               <DiffRail
                                 conversationId={conversation.id}
@@ -11524,6 +11531,9 @@ function App() {
                       onDismiss={dismissGuidedFirstTask}
                       onOpenPrivacySettings={openPrivacySettings}
                       onPickProject={handleOnboardingPickProject}
+                      showCloudInfo={
+                        !cloudInfoSeenOnEarlierLaunch && !welcomeShownThisLaunch
+                      }
                       variant={activeFirstRunVariant}
                     />
                   </div>
@@ -11790,6 +11800,7 @@ function App() {
       />
 
       <SettingsPanel
+        onHalvSignIn={() => setAccountFlowOpen("account")}
         onAccountRefresh={handleAccountRefresh}
         onAccountSignOut={handleAccountSignOut}
         onAccountStatusChange={handleAccountStatusChange}
@@ -11965,19 +11976,6 @@ function App() {
         pending={trustBusy}
         project={trustPrompt}
       />
-
-      {showTrialPrompt ? (
-        <TrialPromptCard
-          account={status.account}
-          facts={trialCardFacts}
-          onAccountRefresh={refreshAccountEntitlements}
-          onClose={() => setTrialPromptOpen(false)}
-          onSignIn={() => {
-            setAccountFlowOpen("account");
-          }}
-          payoff={guidedTaskPayoff}
-        />
-      ) : null}
 
       <MobileRemoteHost />
       <AppDialogHost />

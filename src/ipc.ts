@@ -6,6 +6,8 @@ import type {
   AgentBackend,
   AgentCapabilities,
   AgentMemory,
+  AnalyticsAttribution,
+  AnalyticsConsent,
   AnthropicCredentialStatus,
   AppPreferences,
   AppUpdateRestartBlockers,
@@ -366,6 +368,8 @@ export type KeyboardShortcutsArgs = {
   shortcuts: Record<string, string>;
 };
 export type AnalyticsEnabledArgs = { analyticsEnabled: boolean };
+/** `unset` is not an answer, so the command accepts only `on` and `off`. */
+export type AnalyticsConsentArgs = { consent: Exclude<AnalyticsConsent, "unset"> };
 export type MemoriesEnabledArgs = { memoriesEnabled: boolean };
 export type TaskRoutingArgs = { taskRouting: boolean };
 export type WorkflowRoutingArgs = { workflowRouting: boolean };
@@ -659,6 +663,7 @@ export interface IpcContract {
   agent_session_send: { args: AgentSessionSendArgs; result: void };
   agent_terminal_create: { args: AgentTerminalCreateArgs; result: AgentSession };
   agent_terminal_duplicate: { args: AgentTerminalDuplicateArgs; result: AgentSession };
+  analytics_attribution_get: { args: undefined; result: AnalyticsAttribution };
   analytics_flush: { args: undefined; result: void };
   analytics_install_id: { args: undefined; result: string };
   analytics_record: { args: AnalyticsRecordArgs; result: void };
@@ -768,6 +773,7 @@ export interface IpcContract {
   tray_set_labels: { args: { labels: Record<string, string> }; result: void };
   preferences_get: { args: undefined; result: AppPreferences };
   preferences_set_analytics_enabled: { args: AnalyticsEnabledArgs; result: AppPreferences };
+  preferences_set_analytics_consent: { args: AnalyticsConsentArgs; result: AppPreferences };
   preferences_set_claude_subscription_proxy: { args: ClaudeSubscriptionProxyArgs; result: AppPreferences };
   preferences_set_conversation_defaults: { args: ConversationDefaultsArgs; result: AppPreferences };
   preferences_set_keyboard_shortcuts: { args: KeyboardShortcutsArgs; result: AppPreferences };
@@ -979,6 +985,7 @@ export const commandNames = [
   "agent_session_send",
   "agent_terminal_create",
   "agent_terminal_duplicate",
+  "analytics_attribution_get",
   "analytics_flush",
   "analytics_install_id",
   "analytics_record",
@@ -1084,6 +1091,7 @@ export const commandNames = [
   "plugins_uninstall",
   "preferences_get",
   "preferences_set_analytics_enabled",
+  "preferences_set_analytics_consent",
   "preferences_set_claude_subscription_proxy",
   "preferences_set_conversation_defaults",
   "preferences_set_keyboard_shortcuts",

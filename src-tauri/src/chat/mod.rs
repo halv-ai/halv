@@ -464,14 +464,6 @@ impl ChatManager {
             .contains_key(conversation_id)
     }
 
-    pub(crate) fn has_in_flight(&self) -> bool {
-        !self
-            .in_flight
-            .lock()
-            .expect("chat lock poisoned")
-            .is_empty()
-    }
-
     pub(crate) fn in_flight_count(&self) -> usize {
         self.in_flight.lock().expect("chat lock poisoned").len()
     }

@@ -69,6 +69,7 @@ pub fn run() {
                 }
             }
         })
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
@@ -120,6 +121,7 @@ pub fn run() {
             let claude_subscription_proxy = preferences.claude_subscription_proxy()?;
             app.manage(preferences);
             app.manage(analytics::AnalyticsManager::open(&app_data_dir)?);
+            analytics::listen_for_download_links(app.handle());
             agent_sessions::spawn_transcript_watcher(
                 app.handle().clone(),
                 app.state::<agent_sessions::AgentSessionManager>()
@@ -170,14 +172,11 @@ pub fn run() {
 
             agent_sessions::install::set_managed_root(app_data_dir.join("bin"));
             sidecar_manager.set_resource_dir(app.path().resource_dir()?);
-            let optimization_paused =
-                auth::cached_optimization_paused(&app.state::<storage::Storage>())?;
             auth::spawn_savings_reporter(app.handle().clone());
             pricing::refresh::spawn(app.handle().clone());
+            // The Headroom proxy never pauses for the plan of the account
+            // (ADR 0021), so startup does not read the cached entitlements.
             tauri::async_runtime::spawn(async move {
-                let _ = sidecar_manager
-                    .set_optimization_paused(optimization_paused)
-                    .await;
                 sidecar_manager.startup().await;
             });
             Ok(())
@@ -259,6 +258,7 @@ pub fn run() {
             analytics::analytics_record,
             analytics::analytics_flush,
             analytics::analytics_install_id,
+            analytics::analytics_attribution_get,
             automations::automation_list,
             automations::automation_upsert,
             automations::automation_set_enabled,
@@ -305,6 +305,7 @@ pub fn run() {
             preferences::preferences_set_claude_ultracode,
             preferences::preferences_set_routing_tier_agents,
             preferences::preferences_set_analytics_enabled,
+            preferences::preferences_set_analytics_consent,
             preferences::preferences_set_conversation_defaults,
             prompts::list_custom_prompts,
             projects::project_add_local,

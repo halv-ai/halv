@@ -1,13 +1,14 @@
-import type { AccountAuthStatus, Entitlements } from "./types";
+import type { AccountAuthStatus } from "./types";
 
-export type GateDecision = "paywall" | "verify" | "app";
+export type GateDecision = "verify" | "app";
 export type VerificationGateReason = "missingSync" | "expiredGrace";
 
 const DEFAULT_OFFLINE_GRACE_HOURS = 72;
 const HOUR_MS = 3_600_000;
 
-// A signed-out user always reaches the app (ADR 0018). The trial card, not a
-// launch wall, asks for the account after the first result.
+// Halv never blocks local work (ADR 0021). No account state returns a wall.
+// "verify" means that the entitlements are missing or old. The app then
+// refreshes them in the background, and the user keeps working.
 export function gateDecision(
   accountStatus: AccountAuthStatus,
   nowMs: number,
@@ -21,30 +22,11 @@ export function gateDecision(
     return "verify";
   }
 
-  if (entitlements.canUseApp === false) {
-    return "paywall";
-  }
-
   const syncedMs = Date.parse(accountStatus.syncedAt);
   const graceHours = entitlements.offlineGraceHours ?? DEFAULT_OFFLINE_GRACE_HOURS;
   const ageMs = nowMs - syncedMs;
 
   return ageMs <= graceHours * HOUR_MS ? "app" : "verify";
-}
-
-// An account with no payment history can leave the paywall and read its
-// chats. An account that paid, or that owes a payment, stays on it.
-export function paywallDismissable(
-  entitlements: Entitlements | null | undefined,
-): boolean {
-  if (!entitlements) {
-    return false;
-  }
-  return (
-    entitlements.trialConfirmed !== true &&
-    entitlements.paymentConfirmed !== true &&
-    !entitlements.paymentIssue
-  );
 }
 
 export function verificationGateReason(
@@ -54,3 +36,28 @@ export function verificationGateReason(
     ? "missingSync"
     : "expiredGrace";
 }
+
+/**
+ * The account status that App knows. Components outside the App props tree
+ * (for example the status bar cards) read it here. App publishes each change.
+ */
+export function createAccountStatusStore() {
+  const listeners = new Set<() => void>();
+  let status: AccountAuthStatus | null = null;
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => status,
+    publish(next: AccountAuthStatus | null) {
+      if (next === status) return;
+      status = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+export const accountStatusStore = createAccountStatusStore();

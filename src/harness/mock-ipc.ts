@@ -1,5 +1,6 @@
 import type {
   AgentMemory,
+  AnalyticsConsent,
   AppPreferences,
   AppUpdateSnapshot,
   BillingPrices,
@@ -693,6 +694,7 @@ export class FixtureTransport implements Transport {
     ponytail: "off",
     claudeSubscriptionProxy: true,
     memoriesEnabled: true,
+    analyticsConsent: "on",
     analyticsEnabled: true,
     defaultModel: null,
     defaultEffort: null,
@@ -711,8 +713,20 @@ export class FixtureTransport implements Transport {
     },
   };
 
+  // ?download= gives the harness a stored download id (ADR 0021).
+  private downloadId: string | null = null;
+
   constructor(state: HarnessFixtureState) {
     this.state = state;
+    const search =
+      typeof window === "undefined"
+        ? null
+        : new URLSearchParams(window.location.search);
+    // A fresh install has no answer yet. ?consent= selects one for QA.
+    this.setAnalyticsConsent(
+      harnessAnalyticsConsent(state.scenario, search?.get("consent") ?? null),
+    );
+    this.downloadId = harnessDownloadId(search?.get("download") ?? null);
     this.appUpdate = appUpdateHarnessSnapshot(state.fixture.update);
     // ?remote= selects a Settings > Mobile state for the visual harness.
     this.remote = remoteFixtureStatus(
@@ -1104,6 +1118,11 @@ export class FixtureTransport implements Transport {
     return id;
   }
 
+  private setAnalyticsConsent(consent: AnalyticsConsent) {
+    this.preferences.analyticsConsent = consent;
+    this.preferences.analyticsEnabled = consent === "on";
+  }
+
   private runCallback(id: number, payload: unknown) {
     return this.callbacks.get(id)?.(payload);
   }
@@ -1387,6 +1406,8 @@ export class FixtureTransport implements Transport {
 
       case "analytics_install_id":
         return "00000000-0000-4000-8000-000000000000";
+      case "analytics_attribution_get":
+        return { downloadId: this.downloadId };
       case "analytics_record":
       case "analytics_flush":
         return null;
@@ -1445,7 +1466,13 @@ export class FixtureTransport implements Transport {
         this.preferences.workerLane = "auto";
         return clone(this.preferences);
       case "preferences_set_analytics_enabled":
-        this.preferences.analyticsEnabled = Boolean(args.analyticsEnabled);
+        this.setAnalyticsConsent(args.analyticsEnabled ? "on" : "off");
+        return clone(this.preferences);
+      case "preferences_set_analytics_consent":
+        if (args.consent !== "on" && args.consent !== "off") {
+          throw new Error("Usage events consent must be on or off");
+        }
+        this.setAnalyticsConsent(args.consent);
         return clone(this.preferences);
       case "preferences_set_conversation_defaults":
         this.preferences = {
@@ -4286,6 +4313,7 @@ export const fixtureCommandHandlers: Record<
   agent_session_send: routeFixtureCommand("agent_session_send"),
   agent_terminal_create: routeFixtureCommand("agent_terminal_create"),
   agent_terminal_duplicate: routeFixtureCommand("agent_terminal_duplicate"),
+  analytics_attribution_get: routeFixtureCommand("analytics_attribution_get"),
   analytics_flush: routeFixtureCommand("analytics_flush"),
   analytics_install_id: routeFixtureCommand("analytics_install_id"),
   analytics_record: routeFixtureCommand("analytics_record"),
@@ -4395,6 +4423,7 @@ export const fixtureCommandHandlers: Record<
   plugins_uninstall: routeFixtureCommand("plugins_uninstall"),
   preferences_get: routeFixtureCommand("preferences_get"),
   preferences_set_analytics_enabled: routeFixtureCommand("preferences_set_analytics_enabled"),
+  preferences_set_analytics_consent: routeFixtureCommand("preferences_set_analytics_consent"),
   preferences_set_claude_subscription_proxy: routeFixtureCommand("preferences_set_claude_subscription_proxy"),
   preferences_set_conversation_defaults: routeFixtureCommand("preferences_set_conversation_defaults"),
   preferences_set_keyboard_shortcuts: routeFixtureCommand("preferences_set_keyboard_shortcuts"),
@@ -4620,6 +4649,20 @@ const FIXTURE_DAY_MS = 24 * FIXTURE_HOUR_MS;
  * Applies a Settings > Mobile preset: "connecting", "connected", "error",
  * "pairing", or "approval". Any other value keeps the gateway off.
  */
+function harnessAnalyticsConsent(
+  scenario: HarnessFixtureState["scenario"],
+  preset: string | null,
+): AnalyticsConsent {
+  if (preset === "unset" || preset === "on" || preset === "off") {
+    return preset;
+  }
+  return scenario === "fresh" ? "unset" : "on";
+}
+
+function harnessDownloadId(preset: string | null): string | null {
+  return preset && /^[A-Za-z0-9_-]{1,64}$/.test(preset) ? preset : null;
+}
+
 function remoteFixtureStatus(base: RemoteStatus, preset: string | null): RemoteStatus {
   const presets = ["connecting", "connected", "error", "pairing", "approval"];
   if (!preset || !presets.includes(preset)) return base;

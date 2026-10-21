@@ -197,6 +197,15 @@ pub enum RoutingReason {
     Role,
     /// JEV did not answer, so the workflow agent inherits the coordinator.
     Fallback,
+    /// The user has no Halv Cloud access, so the coordinator does the task
+    /// itself (ADR 0021).
+    #[serde(rename = "halv_cloud_required")]
+    CloudRequired,
+    /// Halv has no valid session: the user is signed out, the session
+    /// expired, or the token is unreadable. The coordinator does the task
+    /// itself.
+    #[serde(rename = "sign_in_required")]
+    SignInRequired,
 }
 
 impl RoutingReason {
@@ -213,6 +222,8 @@ impl RoutingReason {
             Self::Lane => "lane",
             Self::Role => "role",
             Self::Fallback => "fallback",
+            Self::CloudRequired => "halv_cloud_required",
+            Self::SignInRequired => "sign_in_required",
         }
     }
 }

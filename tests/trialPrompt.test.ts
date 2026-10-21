@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createTerminalPromptSubmissionTracker,
-  trialGateForSend,
-} from "../src/trialPrompt.ts";
+// @ts-expect-error Node's test runner needs the source extension.
+import { createTerminalPromptSubmissionTracker } from "../src/trialPrompt.ts";
 
 test("terminal input identifies only prompt submissions", () => {
   const tracker = createTerminalPromptSubmissionTracker();
@@ -44,7 +42,7 @@ test("a rejected submission keeps the draft across repeated Enter presses", () =
   assert.equal(tracker.noteInput("\r"), false);
 });
 
-test("history recall cannot bypass the next-send gate", () => {
+test("history recall counts as a draft that Enter submits", () => {
   for (const history of ["\u001b[A", "\u0010"]) {
     const tracker = createTerminalPromptSubmissionTracker();
     assert.equal(tracker.noteInput(history), false);
@@ -59,26 +57,4 @@ test("deleting or clearing a draft does not submit a prompt", () => {
   assert.equal(tracker.noteInput("\r"), false);
   tracker.noteInput("new\u0015");
   assert.equal(tracker.noteInput("\r"), false);
-});
-
-test("the trial gate opens only after value was delivered", () => {
-  assert.equal(
-    trialGateForSend({ signedIn: false, valueDelivered: true }),
-    true,
-  );
-  assert.equal(
-    trialGateForSend({ signedIn: false, valueDelivered: false }),
-    false,
-  );
-});
-
-test("the trial gate never blocks signed-in users", () => {
-  assert.equal(
-    trialGateForSend({ signedIn: true, valueDelivered: true }),
-    false,
-  );
-  assert.equal(
-    trialGateForSend({ signedIn: true, valueDelivered: false }),
-    false,
-  );
 });

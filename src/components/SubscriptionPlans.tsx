@@ -187,7 +187,7 @@ export function SubscriptionPlans({
     return <section className="flex flex-col self-start rounded-xl border border-surface-border/35 bg-surface-panel p-5 sm:p-6" aria-label={t("Monthly membership")}>
       <p className="text-xs font-medium uppercase tracking-wider text-content-muted">{t("Prefer monthly?")}</p>
       <h2 className="mt-3 text-xl font-semibold text-content-primary">{t("Monthly membership")}</h2>
-      <p className="mt-2 text-sm leading-6 text-content-secondary">{t("All features. No savings cap.")}</p>
+      <p className="mt-2 text-sm leading-6 text-content-secondary">{t("Task routing, account rotation, and the cloud savings dashboard.")}</p>
       <p className="my-6"><span className="text-4xl font-semibold tracking-tight text-content-primary">{price}</span><span className="ml-1 text-sm text-content-muted">{t("/mo")}</span></p>
       <p className="text-xs leading-5 text-content-secondary">{t("7-day free trial · card required · cancel anytime")}</p>
       <div className="mt-auto pt-6">

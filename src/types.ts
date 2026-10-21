@@ -75,6 +75,18 @@ export type Entitlements = {
   referral?: Referral | null;
 };
 
+/** Why the user can or cannot use Halv Cloud (ADR 0021). */
+export type CloudAccessReason =
+  | "signed_out"
+  | "no_plan"
+  | "payment_issue"
+  | "trial"
+  | "paid"
+  | "beta";
+
+/** Halv Cloud access: JEV task routing, the savings MCP, rotation, sync. */
+export type CloudAccess = { granted: boolean; reason: CloudAccessReason };
+
 export type AccountAuthStatus = {
   signedIn: boolean;
   email: string | null;
@@ -204,6 +216,12 @@ export type StatusState = {
   error: string | null;
 };
 
+/** The answer to the usage events question. `unset` sends nothing (ADR 0021). */
+export type AnalyticsConsent = "unset" | "on" | "off";
+
+/** The download id of the site link that led to this install (ADR 0021). */
+export type AnalyticsAttribution = { downloadId: string | null };
+
 export type AppPreferences = {
   subagentConcurrencyLimit: number | null;
   completionNotifications: "never" | "background" | "always";
@@ -214,6 +232,9 @@ export type AppPreferences = {
   ponytail: PonytailMode;
   claudeSubscriptionProxy: boolean;
   memoriesEnabled: boolean;
+  /** Halv sends usage events only for `on` (ADR 0021). */
+  analyticsConsent: AnalyticsConsent;
+  /** Always `analyticsConsent === "on"`. Use `analyticsConsent` in new code. */
   analyticsEnabled: boolean;
   defaultModel: string | null;
   defaultEffort: string | null;

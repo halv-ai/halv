@@ -3,15 +3,18 @@ import { ipc } from "../ipc.ts";
 import { useState } from "react";
 import { billingPortal } from "../billing";
 import { paymentIssueMessage } from "../billingIssue";
-import { useT, type Translate } from "../i18n/runtime";
+import { useT } from "../i18n/runtime";
 import type { AccountAuthStatus } from "../types";
 import { useBillingCheckout } from "../useBillingCheckout";
 import { LifetimeOffer } from "./LifetimeOffer";
 import { SubscriptionPlans } from "./SubscriptionPlans";
 
+// The Halv Cloud plans page. It opens only on a click ("Plans") and always
+// has a way back. Halv never blocks local work (ADR 0021). Everything on this
+// computer stays free, so the page sells only the Halv Cloud features.
 type PaywallProps = {
   authStatus: AccountAuthStatus;
-  onBack?: () => void;
+  onBack: () => void;
   onCheckoutOpened?: () => void;
   onStatusChange: (status: AccountAuthStatus) => void;
 };
@@ -73,28 +76,40 @@ export function Paywall({
   return (
     <main className="flex min-h-screen items-center justify-center bg-surface-base px-4 py-8 text-content-primary">
       <section className="w-full max-w-4xl rounded-2xl border border-surface-border/30 bg-surface-panel p-5 sm:p-8 shadow-2xl shadow-[rgb(var(--shadow-color)/0.24)]">
-        {onBack ? (
-          <button
-            className="mb-5 rounded-md border border-surface-border/30 px-2.5 py-1.5 text-xs text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
-            onClick={onBack}
-            type="button"
-          >
-            {t("Back to chat")}
-          </button>
-        ) : null}
+        <button
+          className="mb-5 rounded-md border border-surface-border/30 px-2.5 py-1.5 text-xs text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30"
+          onClick={onBack}
+          type="button"
+        >
+          {t("Back to chat")}
+        </button>
         <p className="font-mono text-xs uppercase tracking-[0.22em] text-accent">
-          {t("Halv")}
+          {t("Halv Cloud")}
         </p>
         <h1 className="mt-2 text-2xl font-semibold text-content-primary">
-          {paymentIssue
-            ? t("Payment needs attention")
-            : t("Your next chapter. Fully equipped.")}
+          {paymentIssue ? t("Payment needs attention") : t("Halv Cloud")}
         </h1>
         <p className="mt-3 text-sm leading-6 text-content-secondary">
           {paymentIssue
             ? paymentIssueMessage(paymentIssue, t)
-            : paywallMessage(entitlements?.message, t)}
+            : t(
+                "Everything on this computer stays free. Halv Cloud adds task routing to cheaper models, automatic account rotation, and a synced savings dashboard.",
+              )}
         </p>
+        {paymentIssue ? null : (
+          <ul className="mt-3 space-y-1 text-sm leading-6 text-content-secondary">
+            {[
+              t("Task routing to the cheapest capable model"),
+              t("Automatic account rotation"),
+              t("Cloud savings dashboard"),
+            ].map((line) => (
+              <li className="flex gap-2" key={line}>
+                <span aria-hidden="true" className="text-accent">·</span>
+                {line}
+              </li>
+            ))}
+          </ul>
+        )}
 
         <p className="mt-3 text-xs text-content-muted">{authStatus.email ?? t("Signed in")}</p>
 
@@ -164,16 +179,6 @@ export function Paywall({
       </section>
     </main>
   );
-}
-
-function paywallMessage(
-  message: string | null | undefined,
-  t: Translate,
-) {
-  if (message === "Choose a plan to keep using Halv.") {
-    return t("All your agents. Every feature. Choose how you make it yours.");
-  }
-  return message ?? t("Your account needs an active subscription.");
 }
 
 function errorText(error: unknown) {

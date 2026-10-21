@@ -1,7 +1,5 @@
 use crate::{
-    chat::ChatManager,
     secret_store,
-    sidecar::SidecarManager,
     storage::{AuthSession, SavingsReportEvent, Storage},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -1480,8 +1478,7 @@ pub fn wake_savings_reporter() {
     savings_reporter_notify().notify_one();
 }
 
-/// Starts the single process-wide reporter and immediately reconciles cached
-/// savings-cap state with the local optimization mode.
+/// Starts the single process-wide savings reporter.
 pub fn spawn_savings_reporter(app: AppHandle) {
     if SAVINGS_REPORTER_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -1492,7 +1489,6 @@ pub fn spawn_savings_reporter(app: AppHandle) {
 }
 
 async fn run_savings_reporter(app: AppHandle) {
-    let sidecar = app.state::<SidecarManager>().inner().clone();
     let mut retry_at = TokioInstant::now();
     let mut backoff = SAVINGS_REPORT_INITIAL_BACKOFF;
 
@@ -1510,16 +1506,8 @@ async fn run_savings_reporter(app: AppHandle) {
                 continue;
             }
         };
-        let optimization_paused = optimization_paused_for_session(session.as_ref());
-        // Flipping the flag RESTARTS the managed proxy; doing that under a
-        // live agent terminal killed its engine session mid-call. Wait for
-        // an idle moment - the pause is a billing cap, not an emergency.
-        let agent_sessions_active = app
-            .state::<crate::agent_sessions::AgentSessionManager>()
-            .active_session_count();
-        if !app.state::<ChatManager>().has_in_flight() && agent_sessions_active == 0 {
-            let _ = sidecar.set_optimization_paused(optimization_paused).await;
-        }
+        // The Headroom proxy is local work, so it never depends on the plan
+        // of the account (ADR 0021). The reporter never pauses it.
 
         let Some(session) = session else {
             retry_at = TokioInstant::now();
@@ -1801,21 +1789,6 @@ fn cached_entitlements(session: &AuthSession) -> Option<Entitlements> {
         .entitlements_json
         .as_deref()
         .and_then(|value| serde_json::from_str(value).ok())
-}
-
-fn optimization_paused_for_session(session: Option<&AuthSession>) -> bool {
-    session
-        .filter(|session| session.token.is_some())
-        .and_then(cached_entitlements)
-        .is_some_and(|entitlements| entitlements.plan == "basic" && entitlements.savings.exhausted)
-}
-
-pub(crate) fn cached_optimization_paused(
-    storage: &Storage,
-) -> Result<bool, crate::storage::StorageError> {
-    storage
-        .get_auth_session()
-        .map(|session| optimization_paused_for_session(session.as_ref()))
 }
 
 fn savings_period_refresh_required(session: &AuthSession) -> bool {
@@ -4816,21 +4789,18 @@ mod tests {
     }
 
     #[test]
-    fn basic_exhaustion_and_month_rollover_control_optimization() {
+    fn basic_exhaustion_month_rollover_refreshes_savings() {
+        // Exhausted Basic savings never pause the local proxy (ADR 0021).
+        // Only the month rollover asks the server for a new period.
         let current_period = Utc::now().format("%Y-%m").to_string();
         let basic = test_savings_session(Some("token"), "basic", &current_period, true);
-        assert!(optimization_paused_for_session(Some(&basic)));
         assert!(!savings_period_refresh_required(&basic));
 
         let expired = test_savings_session(Some("token"), "basic", "2000-01", true);
         assert!(savings_period_refresh_required(&expired));
 
         let unlimited = test_savings_session(Some("token"), "unlimited", "2000-01", true);
-        assert!(!optimization_paused_for_session(Some(&unlimited)));
         assert!(!savings_period_refresh_required(&unlimited));
-
-        let signed_out = test_savings_session(None, "basic", &current_period, true);
-        assert!(!optimization_paused_for_session(Some(&signed_out)));
     }
 
     #[test]

@@ -6,15 +6,23 @@ import {
   shouldShowFirstRunCard,
 } from "../src/firstRun.ts";
 import {
+  CLOUD_INFO_SEEN_STORAGE_KEY,
+  CONSENT_BANNER_SHOWN_STORAGE_KEY,
   ONBOARDING_STORAGE_KEY,
   SAFE_FIRST_TASK_PROMPT,
   WELCOME_SEEN_STORAGE_KEY,
   conversationIdToRestore,
   onboardingPayoffCopy,
   onboardingReplayEnabled,
+  readCloudInfoSeen,
+  readConsentBannerShown,
   readOnboardingPreference,
   readWelcomeSeen,
+  shouldAskConsent,
+  shouldShowConsentBanner,
   shouldShowWelcomeScreen,
+  writeCloudInfoSeen,
+  writeConsentBannerShown,
   writeOnboardingPreference,
   writeWelcomeSeen,
 } from "../src/onboarding.ts";
@@ -310,4 +318,79 @@ test("the completion payoff prefers turn savings and degrades clearly", () => {
     onboardingPayoffCopy(0, 0),
     "This reply had little context to trim. Savings grow with longer tasks.",
   );
+});
+
+test("consent is asked only while the saved answer is unset", () => {
+  for (const welcomeSeen of [false, true]) {
+    assert.equal(shouldAskConsent({ consent: "unset", welcomeSeen }), true);
+    assert.equal(shouldAskConsent({ consent: "on", welcomeSeen }), false);
+    assert.equal(shouldAskConsent({ consent: "off", welcomeSeen }), false);
+  }
+});
+
+test("consent is not asked before the saved answer loads", () => {
+  assert.equal(shouldAskConsent({ consent: null, welcomeSeen: true }), false);
+  assert.equal(
+    shouldAskConsent({ consent: undefined, welcomeSeen: false }),
+    false,
+  );
+});
+
+test("the consent banner asks only in the main app and only once at a time", () => {
+  const main = { welcomeScreenShown: false, firstTaskShown: false };
+  assert.equal(shouldShowConsentBanner({ consent: "unset", ...main }), true);
+  assert.equal(shouldShowConsentBanner({ consent: "on", ...main }), false);
+  assert.equal(shouldShowConsentBanner({ consent: "off", ...main }), false);
+  assert.equal(shouldShowConsentBanner({ consent: null, ...main }), false);
+  // The welcome screen and the first-run card have their own ask card.
+  assert.equal(
+    shouldShowConsentBanner({
+      consent: "unset",
+      welcomeScreenShown: true,
+      firstTaskShown: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowConsentBanner({
+      consent: "unset",
+      welcomeScreenShown: false,
+      firstTaskShown: true,
+    }),
+    false,
+  );
+});
+
+test("the consent banner shows on one launch only, and the answer stays unset", () => {
+  const storage = memoryStorage();
+  const main = { welcomeScreenShown: false, firstTaskShown: false };
+  assert.equal(readConsentBannerShown(storage), false);
+  assert.equal(
+    shouldShowConsentBanner({
+      consent: "unset",
+      ...main,
+      shownOnEarlierLaunch: readConsentBannerShown(storage),
+    }),
+    true,
+  );
+  writeConsentBannerShown(storage);
+  assert.equal(storage.getItem(CONSENT_BANNER_SHOWN_STORAGE_KEY), "1");
+  assert.equal(
+    shouldShowConsentBanner({
+      consent: "unset",
+      ...main,
+      shownOnEarlierLaunch: readConsentBannerShown(storage),
+    }),
+    false,
+  );
+  // The answer stays unset, so Halv still sends nothing.
+  assert.equal(shouldAskConsent({ consent: "unset", welcomeSeen: true }), true);
+});
+
+test("the Halv Cloud information block shows once", () => {
+  const storage = memoryStorage();
+  assert.equal(readCloudInfoSeen(storage), false);
+  writeCloudInfoSeen(storage);
+  assert.equal(storage.getItem(CLOUD_INFO_SEEN_STORAGE_KEY), "1");
+  assert.equal(readCloudInfoSeen(storage), true);
 });

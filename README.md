@@ -57,7 +57,9 @@ RELEASING.md gives the full release procedure.
 
 To replay onboarding, set `VITE_HALV_RESET_ONBOARDING=1`.
 Example: `VITE_HALV_RESET_ONBOARDING=1 pnpm tauri dev`.
-The flag clears the onboarding flags at startup and skips the launch trial gate.
+The flag clears the onboarding flags at startup.
+The flag also treats the account as signed out, so the Halv Cloud pitch shows again after the first result.
+The flag does not reset the usage events answer.
 
 ## Tests
 

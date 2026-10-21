@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { accountStatusStore } from "../gate";
+import { cloudAccess } from "../halvCloud.ts";
 import { formatMoney, useT, type Translate } from "../i18n/runtime";
 import {
   routingSavingsFromTotals,
@@ -12,18 +14,24 @@ import {
   groupTaskBoardRoutes,
   isTerminalTaskRoute,
   receiptTokens,
+  readRoutingCloudCardDismissed,
   readTaskRouteDismissals,
   routingSavingsLabel,
   savedLabel,
   sortTaskBoardRoutes,
+  splitHalvCloudFallbackRoutes,
   taskRouteModelLabel,
+  taskRouteReasonLabel,
   summarizeRoutes,
   visibleTaskRoutes,
   workflowRouteApplied,
+  writeRoutingCloudCardDismissed,
   writeTaskRouteDismissals,
   type TaskRouteDismissal,
 } from "../taskBoard.ts";
+import { HalvCloudCard } from "./HalvCloudCard";
 import type {
+  AccountAuthStatus,
   RouteCost,
   RoutingSavingsReport,
   TaskRoute,
@@ -48,6 +56,9 @@ type TaskBoardProps = {
    * board reads the settled chains of the conversation.
    */
   routingSavings?: RoutingSavings;
+  /** Opens the Halv sign-in flow from the Halv Cloud card. */
+  onSignIn?: () => void;
+  onAccountStatusChange?: (status: AccountAuthStatus) => void;
 };
 
 type RouteSnapshot = {
@@ -66,8 +77,18 @@ export function TaskBoard({
   conversationId,
   refreshSignal,
   routingSavings: routingSavingsOverride,
+  onSignIn,
+  onAccountStatusChange,
 }: TaskBoardProps): JSX.Element | null {
   const t = useT();
+  const account = useSyncExternalStore(
+    accountStatusStore.subscribe,
+    accountStatusStore.getSnapshot,
+    accountStatusStore.getSnapshot,
+  );
+  const [cloudCardDismissed, setCloudCardDismissed] = useState(
+    readRoutingCloudCardDismissed,
+  );
   const [routeSnapshot, setRouteSnapshot] = useState<RouteSnapshot>({
     conversationId: null,
     routes: [],
@@ -131,9 +152,37 @@ export function TaskBoard({
     dismissalSnapshot.conversationId === conversationId
       ? dismissalSnapshot.routes
       : [];
-  const visibleRoutes = visibleTaskRoutes(routes, dismissals);
+  // A route without Halv Cloud access is no real route: the coordinator did
+  // the task itself (ADR 0021). The board lists only real routes. A fallback
+  // route is the point of use, so the board shows the Halv Cloud card once.
+  const { routed: visibleRoutes, fallbackCount } = splitHalvCloudFallbackRoutes(
+    visibleTaskRoutes(routes, dismissals),
+  );
+  const access = cloudAccess(account);
+  const cloudCard =
+    conversationId &&
+    fallbackCount > 0 &&
+    !access.granted &&
+    !cloudCardDismissed &&
+    onSignIn &&
+    onAccountStatusChange ? (
+      <aside aria-label={t("Halv Cloud")} className="task-board task-board-open p-3">
+        <HalvCloudCard
+          access={access}
+          account={account}
+          feature="routing"
+          onDismiss={() => {
+            writeRoutingCloudCardDismissed();
+            setCloudCardDismissed(true);
+          }}
+          onSignIn={onSignIn}
+          onStatusChange={onAccountStatusChange}
+          placement="inline"
+        />
+      </aside>
+    ) : null;
 
-  if (!conversationId || visibleRoutes.length === 0) return null;
+  if (!conversationId || visibleRoutes.length === 0) return cloudCard;
 
   const ordered = sortTaskBoardRoutes(visibleRoutes);
   const summary = summarizeRoutes(visibleRoutes);
@@ -355,7 +404,7 @@ function TaskBoardRow({
           className="rounded bg-surface-base px-1.5 py-0.5 text-xs text-content-secondary"
           key={reason}
         >
-          {reason}
+          {taskRouteReasonLabel(reason, t)}
         </span>
       ))}
       {escalatedFromTitle ? (

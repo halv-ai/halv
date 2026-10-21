@@ -1,4 +1,8 @@
 import { ipc } from "./ipc.ts";
+import type { AnalyticsAttribution, AnalyticsConsent } from "./types.ts";
+
+/** The app sends this event when a site link gives a new download id. */
+export const ANALYTICS_ATTRIBUTION_EVENT = "halv://attribution";
 
 // New names preserve the meaning of historical observations: the old
 // `trial_started` meant checkout opened and `paid` also included trials.
@@ -50,4 +54,51 @@ export function flushAnalytics(): Promise<void> {
 
 export function analyticsInstallId(): Promise<string> {
   return ipc.analytics.installId();
+}
+
+/** Halv sends usage events only after the user said yes (ADR 0021). */
+export function analyticsConsentAllowsEvents(
+  consent: AnalyticsConsent | null | undefined,
+): boolean {
+  return consent === "on";
+}
+
+/**
+ * The funnel events for one change of the app state (ADR 0021).
+ * - Without consent, Halv records no event and forgets the state. The native
+ *   queue also drops each event while the answer is not "on".
+ * - The first state with consent records `first_open` first. An install that
+ *   answers "on" after its first launch thus still sends `first_open` once.
+ * Native storage drops repeats, so a later launch can ask again.
+ */
+export function analyticsEventsWithConsent(
+  consent: AnalyticsConsent | null | undefined,
+  previous: AnalyticsState | null,
+  next: AnalyticsState,
+): { events: AnalyticsEvent[]; state: AnalyticsState | null } {
+  if (!analyticsConsentAllowsEvents(consent)) {
+    return { events: [], state: null };
+  }
+  const events = analyticsEventsForState(previous, next);
+  return {
+    events: previous === null ? ["first_open", ...events] : events,
+    state: next,
+  };
+}
+
+/**
+ * The stored download id of the site link. It is `null` when no link came,
+ * and after `first_open` reached the server.
+ */
+export function analyticsAttribution(): Promise<AnalyticsAttribution> {
+  return ipc.analytics.attributionGet();
+}
+
+export function listenForAnalyticsAttribution(
+  handler: (attribution: AnalyticsAttribution) => void,
+): Promise<() => void> {
+  return ipc.events.listen<AnalyticsAttribution>(
+    ANALYTICS_ATTRIBUTION_EVENT,
+    handler,
+  );
 }

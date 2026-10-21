@@ -3934,12 +3934,6 @@ impl AgentSessionManager {
         Ok(managed.snapshot())
     }
 
-    /// Live managed sessions (GUI and terminal). The savings reporter must
-    /// not restart the proxy under them.
-    pub fn active_session_count(&self) -> usize {
-        self.active_sessions.load(Ordering::SeqCst)
-    }
-
     /// GUI sessions with a turn in progress. Their CLI is a child of the app,
     /// so an app restart stops the turn. An idle session can restart. A turn
     /// that waits for a permission answer is still in progress, although

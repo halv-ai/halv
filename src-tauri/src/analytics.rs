@@ -1,4 +1,8 @@
-use crate::{app_data, auth, preferences::PreferencesManager, storage::Storage};
+use crate::{
+    app_data, auth,
+    preferences::{AnalyticsConsent, PreferencesManager},
+    storage::Storage,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -8,10 +12,19 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const INSTALL_ID_FILE_NAME: &str = "analytics-install-id";
 const QUEUE_FILE_NAME: &str = "analytics-queue.json";
+/// The download id of the site link that led to this install (ADR 0021).
+const ATTRIBUTION_FILE_NAME: &str = "attribution.json";
+/// The app tells the webview about a new download id with this event.
+pub const ATTRIBUTION_EVENT: &str = "halv://attribution";
+const FIRST_OPEN: &str = "first_open";
+const DOWNLOAD_LINK_SCHEME: &str = "halv";
+const DOWNLOAD_LINK_HOST: &str = "welcome";
+const DOWNLOAD_ID_PARAMETER: &str = "d";
+const DOWNLOAD_ID_MAX_LENGTH: usize = 64;
 const ANALYTICS_EVENTS_PATH: &str = "/v1/analytics/events";
 const JOURNEY_EVENTS_PATH: &str = "/v1/analytics/journey";
 const JOURNEY_EVENTS: [&str; 13] = [
@@ -45,6 +58,9 @@ struct AnalyticsEvent {
     category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app_version: Option<String>,
+    /// The download id of the site link. Only `first_open` has it (ADR 0021).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    download_id: Option<String>,
 }
 
 impl AnalyticsEvent {
@@ -71,14 +87,17 @@ impl AnalyticsQueue {
         at: u64,
         category: Option<String>,
         app_version: Option<String>,
+        download_id: Option<String>,
     ) -> Result<bool, String> {
         validate_event(event)?;
         validate_category(event, category.as_deref())?;
+        validate_download_id(event, download_id.as_deref())?;
         let value = AnalyticsEvent {
             event: event.to_string(),
             at,
             category,
             app_version,
+            download_id,
         };
         let key = value.key();
         if self.recorded.contains(&key) {
@@ -109,6 +128,7 @@ impl AnalyticsQueue {
         for event in &self.pending {
             validate_event(&event.event)?;
             validate_category(&event.event, event.category.as_deref())?;
+            validate_download_id(&event.event, event.download_id.as_deref())?;
             if !pending_names.insert(event.key()) {
                 return Err(format!("Duplicate queued analytics event: {}", event.event));
             }
@@ -129,6 +149,27 @@ impl AnalyticsQueue {
         }
         Ok(())
     }
+
+    /// True after `first_open` left the queue. A download id that arrives
+    /// later cannot travel with it anymore.
+    fn first_open_sent(&self) -> bool {
+        self.recorded.contains(FIRST_OPEN)
+            && !self.pending.iter().any(|event| event.event == FIRST_OPEN)
+    }
+}
+
+/// The download id that a site link gave to this install (ADR 0021).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct Attribution {
+    download_id: String,
+    received_at: u64,
+}
+
+/// What the webview may show about the download id.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributionSnapshot {
+    pub download_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +177,9 @@ pub struct AnalyticsManager {
     install_id: Arc<str>,
     queue_path: Arc<PathBuf>,
     queue: Arc<Mutex<AnalyticsQueue>>,
+    attribution_path: Arc<PathBuf>,
+    // Lock order: `queue` first, then `attribution`.
+    attribution: Arc<Mutex<Option<Attribution>>>,
     flush_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -143,6 +187,7 @@ impl AnalyticsManager {
     pub fn open(app_data_dir: &Path) -> io::Result<Self> {
         fs::create_dir_all(app_data_dir)?;
         let queue_path = app_data_dir.join(QUEUE_FILE_NAME);
+        let attribution_path = app_data_dir.join(ATTRIBUTION_FILE_NAME);
         // An earlier release created these files with the default mode.
         app_data::restrict_file(&app_data_dir.join(INSTALL_ID_FILE_NAME));
         app_data::restrict_file(&queue_path);
@@ -151,11 +196,14 @@ impl AnalyticsManager {
         queue
             .validate()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let attribution = read_attribution(&attribution_path);
 
         Ok(Self {
             install_id: install_id.into(),
             queue_path: Arc::new(queue_path),
             queue: Arc::new(Mutex::new(queue)),
+            attribution_path: Arc::new(attribution_path),
+            attribution: Arc::new(Mutex::new(attribution)),
             flush_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -180,8 +228,13 @@ impl AnalyticsManager {
             .queue
             .lock()
             .map_err(|_| "Analytics queue lock is poisoned".to_string())?;
+        let download_id = if event == FIRST_OPEN {
+            self.download_id()?
+        } else {
+            None
+        };
         let mut next = queue.clone();
-        let recorded = next.record(event, at, category, app_version)?;
+        let recorded = next.record(event, at, category, app_version, download_id)?;
         if recorded {
             write_queue_atomically(&self.queue_path, &next).map_err(|error| error.to_string())?;
             *queue = next;
@@ -220,6 +273,83 @@ impl AnalyticsManager {
         next.acknowledge(sent);
         write_queue_atomically(&self.queue_path, &next).map_err(|error| error.to_string())?;
         *queue = next;
+        // The server has `first_open` now. The download id has done its job.
+        if sent.iter().any(|event| event.event == FIRST_OPEN) {
+            self.forget_download_id()?;
+        }
+        Ok(())
+    }
+
+    /// The stored download id, when a site link gave one.
+    pub(crate) fn download_id(&self) -> Result<Option<String>, String> {
+        self.attribution
+            .lock()
+            .map(|attribution| {
+                attribution
+                    .as_ref()
+                    .map(|attribution| attribution.download_id.clone())
+            })
+            .map_err(|_| "Analytics attribution lock is poisoned".to_string())
+    }
+
+    /// Stores the download id of a site link, also without consent (ADR
+    /// 0021). The first id wins. An id that arrives after `first_open` left
+    /// the queue is dropped. Returns true when Halv stored the id.
+    pub(crate) fn accept_download_id(&self, download_id: &str, now: u64) -> Result<bool, String> {
+        if !is_valid_download_id(download_id) {
+            return Err("Invalid download id".to_string());
+        }
+        let mut queue = self
+            .queue
+            .lock()
+            .map_err(|_| "Analytics queue lock is poisoned".to_string())?;
+        let mut attribution = self
+            .attribution
+            .lock()
+            .map_err(|_| "Analytics attribution lock is poisoned".to_string())?;
+        if attribution.is_some() || queue.first_open_sent() {
+            return Ok(false);
+        }
+        let stored = Attribution {
+            download_id: download_id.to_string(),
+            received_at: now,
+        };
+        write_attribution_atomically(&self.attribution_path, &stored)
+            .map_err(|error| error.to_string())?;
+        *attribution = Some(stored);
+
+        // A `first_open` that still waits in the queue takes the id with it.
+        let mut next = queue.clone();
+        let mut changed = false;
+        for event in next
+            .pending
+            .iter_mut()
+            .filter(|event| event.event == FIRST_OPEN && event.download_id.is_none())
+        {
+            event.download_id = Some(download_id.to_string());
+            changed = true;
+        }
+        if changed {
+            write_queue_atomically(&self.queue_path, &next).map_err(|error| error.to_string())?;
+            *queue = next;
+        }
+        Ok(true)
+    }
+
+    fn forget_download_id(&self) -> Result<(), String> {
+        let mut attribution = self
+            .attribution
+            .lock()
+            .map_err(|_| "Analytics attribution lock is poisoned".to_string())?;
+        if attribution.is_none() {
+            return Ok(());
+        }
+        match fs::remove_file(self.attribution_path.as_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        *attribution = None;
         Ok(())
     }
 
@@ -231,11 +361,10 @@ impl AnalyticsManager {
         if queue.pending.is_empty() {
             return Ok(());
         }
-        let mut next = queue.clone();
-        next.pending.clear();
-        write_queue_atomically(&self.queue_path, &next).map_err(|error| error.to_string())?;
-        *queue = next;
-        Ok(())
+        // The in-memory queue drops its events first, so a failed write
+        // never leaves an event to send in this session.
+        queue.pending.clear();
+        write_queue_atomically(&self.queue_path, &queue).map_err(|error| error.to_string())
     }
 }
 
@@ -253,6 +382,48 @@ fn validate_event(event: &str) -> Result<(), String> {
     } else {
         Err(format!("Unknown analytics event: {event}"))
     }
+}
+
+fn validate_download_id(event: &str, download_id: Option<&str>) -> Result<(), String> {
+    match download_id {
+        None => Ok(()),
+        Some(value) if event == FIRST_OPEN && is_valid_download_id(value) => Ok(()),
+        Some(_) => Err("Invalid analytics download id".to_string()),
+    }
+}
+
+/// A download id is opaque: 1 to 64 characters of `[A-Za-z0-9_-]`.
+fn is_valid_download_id(value: &str) -> bool {
+    (1..=DOWNLOAD_ID_MAX_LENGTH).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+/// Returns the download id of a `halv://welcome?d=<download_id>` link. Any
+/// other URL, or a link with a bad or repeated id, gives `None`.
+pub(crate) fn download_id_from_url(url: &url::Url) -> Option<String> {
+    let host_matches = url
+        .host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case(DOWNLOAD_LINK_HOST));
+    if url.scheme() != DOWNLOAD_LINK_SCHEME
+        || !host_matches
+        || !matches!(url.path(), "" | "/")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return None;
+    }
+    let mut values = url
+        .query_pairs()
+        .filter(|(key, _)| key == DOWNLOAD_ID_PARAMETER)
+        .map(|(_, value)| value.into_owned());
+    let download_id = values.next()?;
+    if values.next().is_some() {
+        return None;
+    }
+    is_valid_download_id(&download_id).then_some(download_id)
 }
 
 fn validate_category(event: &str, category: Option<&str>) -> Result<(), String> {
@@ -346,6 +517,23 @@ fn read_queue(path: &Path) -> io::Result<AnalyticsQueue> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(AnalyticsQueue::default()),
         Err(error) => Err(error),
     }
+}
+
+/// Reads the stored download id. A damaged file counts as no id, so it never
+/// stops the app from starting.
+fn read_attribution(path: &Path) -> Option<Attribution> {
+    app_data::restrict_file(path);
+    let contents = fs::read(path).ok()?;
+    serde_json::from_slice::<Attribution>(&contents)
+        .ok()
+        .filter(|attribution| is_valid_download_id(&attribution.download_id))
+}
+
+fn write_attribution_atomically(path: &Path, attribution: &Attribution) -> io::Result<()> {
+    let mut serialized = serde_json::to_vec_pretty(attribution)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    serialized.push(b'\n');
+    write_bytes_atomically(path, &serialized)
 }
 
 fn write_queue_atomically(path: &Path, queue: &AnalyticsQueue) -> io::Result<()> {
@@ -464,27 +652,118 @@ async fn flush_pending_guarded(
             if !can_send()? {
                 return manager.clear_pending();
             }
-            let response = auth::api_client()
-                .post(auth::api_url(server_url, path))
-                .json(&AnalyticsBatch {
-                    install_id: &manager.install_id,
+            let mut status =
+                post_batch(server_url, path, &manager.install_id, app_version, batch).await?;
+            // A server that does not know `download_id` rejects the batch
+            // with HTTP 400. Send the batch again without the id, so the
+            // journey does not stop (ADR 0021).
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && batch.iter().any(|event| event.download_id.is_some())
+            {
+                if !can_send()? {
+                    return manager.clear_pending();
+                }
+                let without_download_id = batch
+                    .iter()
+                    .cloned()
+                    .map(|event| AnalyticsEvent {
+                        download_id: None,
+                        ..event
+                    })
+                    .collect::<Vec<_>>();
+                status = post_batch(
+                    server_url,
+                    path,
+                    &manager.install_id,
                     app_version,
-                    os: analytics_os()?,
-                    events: batch,
-                })
-                .send()
-                .await
-                .map_err(|error| format!("Analytics request failed: {error}"))?;
-            if !response.status().is_success() {
-                return Err(format!(
-                    "Analytics request returned HTTP {}",
-                    response.status()
-                ));
+                    &without_download_id,
+                )
+                .await?;
+            }
+            if !status.is_success() {
+                return Err(format!("Analytics request returned HTTP {status}"));
             }
             manager.acknowledge(batch)?;
         }
     }
     Ok(())
+}
+
+async fn post_batch(
+    server_url: &str,
+    path: &str,
+    install_id: &str,
+    app_version: &str,
+    events: &[AnalyticsEvent],
+) -> Result<reqwest::StatusCode, String> {
+    auth::api_client()
+        .post(auth::api_url(server_url, path))
+        .json(&AnalyticsBatch {
+            install_id,
+            app_version,
+            os: analytics_os()?,
+            events,
+        })
+        .send()
+        .await
+        .map(|response| response.status())
+        .map_err(|error| format!("Analytics request failed: {error}"))
+}
+
+/// Records one event only when the user agreed to usage events (ADR 0021).
+/// Any other answer drops the event and the queue, and does not mark the
+/// event as recorded. Returns true when sharing is on.
+fn record_if_consented(
+    manager: &AnalyticsManager,
+    consent: AnalyticsConsent,
+    event: &str,
+    at: u64,
+    category: Option<String>,
+    app_version: Option<String>,
+) -> Result<bool, String> {
+    validate_event(event)?;
+    if consent != AnalyticsConsent::On {
+        manager.clear_pending()?;
+        return Ok(false);
+    }
+    manager.record_with_context(event, at, category, app_version)?;
+    Ok(true)
+}
+
+/// Reads the site links that open Halv (ADR 0021): the link that started the
+/// app and each later link. The deep-link plugin must be registered.
+pub fn listen_for_download_links(app: &AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+
+    let deep_link = app.deep_link();
+    if let Ok(Some(urls)) = deep_link.get_current() {
+        accept_download_links(app, &urls);
+    }
+    let handle = app.clone();
+    deep_link.on_open_url(move |event| accept_download_links(&handle, &event.urls()));
+}
+
+fn accept_download_links(app: &AppHandle, urls: &[url::Url]) {
+    let Some(download_id) = urls.iter().find_map(download_id_from_url) else {
+        return;
+    };
+    let Some(manager) = app.try_state::<AnalyticsManager>() else {
+        return;
+    };
+    let accepted =
+        unix_time_seconds().and_then(|now| manager.accept_download_id(&download_id, now));
+    match accepted {
+        Ok(true) => {
+            let _ = app.emit(
+                ATTRIBUTION_EVENT,
+                AttributionSnapshot {
+                    download_id: Some(download_id),
+                },
+            );
+        }
+        Ok(false) => {}
+        Err(error) => log_failure(&error),
+    }
 }
 
 async fn flush_for_app(app: &AppHandle) -> Result<(), String> {
@@ -517,16 +796,18 @@ pub async fn analytics_record(
 ) -> Result<(), String> {
     validate_event(&event)?;
     let manager = app.state::<AnalyticsManager>().inner().clone();
-    if !app.state::<PreferencesManager>().analytics_enabled()? {
-        return manager.clear_pending();
-    }
-
-    manager.record_with_context(
+    let consent = app.state::<PreferencesManager>().analytics_consent()?;
+    let sharing = record_if_consented(
+        &manager,
+        consent,
         &event,
         unix_time_seconds()?,
         category,
         Some(app.package_info().version.to_string()),
     )?;
+    if !sharing {
+        return Ok(());
+    }
     tauri::async_runtime::spawn(async move {
         if let Err(error) = flush_for_app(&app).await {
             log_failure(&error);
@@ -547,6 +828,17 @@ pub async fn analytics_flush(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn analytics_install_id(manager: tauri::State<'_, AnalyticsManager>) -> String {
     manager.install_id()
+}
+
+/// The stored download id. It stays `None` after `first_open` reached the
+/// server, because Halv then deletes it.
+#[tauri::command]
+pub fn analytics_attribution_get(
+    manager: tauri::State<'_, AnalyticsManager>,
+) -> Result<AttributionSnapshot, String> {
+    Ok(AttributionSnapshot {
+        download_id: manager.download_id()?,
+    })
 }
 
 #[cfg(test)]
@@ -592,6 +884,7 @@ mod tests {
                 at: 10,
                 category: None,
                 app_version: None,
+                download_id: None,
             }]
         );
 
@@ -651,6 +944,7 @@ mod tests {
                 at: 20,
                 category: None,
                 app_version: None,
+                download_id: None,
             }]
         );
         assert!(!reopened.record("installed", 30).expect("dedupe event"));
@@ -765,5 +1059,259 @@ mod tests {
         assert!(flush_pending(&manager, &url, "0.6.0").await.is_err());
         server.join().unwrap();
         assert_eq!(manager.pending().unwrap().len(), 1);
+    }
+
+    fn link(value: &str) -> url::Url {
+        url::Url::parse(value).unwrap()
+    }
+
+    #[test]
+    fn download_link_parser_accepts_only_a_valid_welcome_link() {
+        let max = "a".repeat(DOWNLOAD_ID_MAX_LENGTH);
+        let accepted = [
+            ("halv://welcome?d=dl_8Hc-2", "dl_8Hc-2"),
+            ("halv://welcome/?d=abc", "abc"),
+            ("halv://WELCOME?d=abc", "abc"),
+            ("halv://welcome?utm_source=site&d=abc", "abc"),
+            ("halv://welcome?d=abc#top", "abc"),
+        ];
+        for (value, expected) in accepted {
+            assert_eq!(
+                download_id_from_url(&link(value)).as_deref(),
+                Some(expected),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            download_id_from_url(&link(&format!("halv://welcome?d={max}"))),
+            Some(max.clone())
+        );
+
+        let rejected = [
+            // Bad characters, also after percent decoding.
+            "halv://welcome?d=abc.def",
+            "halv://welcome?d=abc%20def",
+            "halv://welcome?d=abc%2Fdef",
+            "halv://welcome?d=%C3%A9t%C3%A9",
+            "halv://welcome?d=",
+            // Too long.
+            &format!("halv://welcome?d={max}a"),
+            // Wrong host, path, scheme or authority.
+            "halv://settings?d=abc",
+            "halv://welcome/extra?d=abc",
+            "https://welcome?d=abc",
+            "https://halv.ai/welcome?d=abc",
+            "halv://user@welcome?d=abc",
+            "halv://welcome:8080?d=abc",
+            "halv:welcome?d=abc",
+            // No query, no id, or a repeated id.
+            "halv://welcome",
+            "halv://welcome?download=abc",
+            "halv://welcome?d=abc&d=def",
+        ];
+        for value in rejected {
+            assert_eq!(download_id_from_url(&link(value)), None, "{value}");
+        }
+    }
+
+    #[test]
+    fn unset_or_declined_consent_drops_events_without_marking_them() {
+        let directory = TestDirectory::new("consent-gate");
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        for consent in [AnalyticsConsent::Unset, AnalyticsConsent::Off] {
+            assert!(!record_if_consented(&manager, consent, FIRST_OPEN, 100, None, None).unwrap());
+            assert!(manager.pending().unwrap().is_empty());
+        }
+        assert!(record_if_consented(
+            &manager,
+            AnalyticsConsent::Unset,
+            "not_an_event",
+            100,
+            None,
+            None
+        )
+        .is_err());
+
+        // A later yes still records the event that the unset answer dropped.
+        assert!(
+            record_if_consented(&manager, AnalyticsConsent::On, FIRST_OPEN, 200, None, None)
+                .unwrap()
+        );
+        assert_eq!(manager.pending().unwrap().len(), 1);
+        assert_eq!(manager.pending().unwrap()[0].at, 200);
+
+        // Unset again drops the queue.
+        record_if_consented(
+            &manager,
+            AnalyticsConsent::Unset,
+            "active_day",
+            300,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(manager.pending().unwrap().is_empty());
+    }
+
+    #[test]
+    fn download_id_is_stored_without_consent_and_sent_with_first_open() {
+        let directory = TestDirectory::new("attribution-before-consent");
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        assert_eq!(manager.download_id().unwrap(), None);
+        assert!(manager.accept_download_id("bad id", 10).is_err());
+
+        // The link arrives while the answer is unset. Halv stores the id.
+        assert!(
+            !record_if_consented(&manager, AnalyticsConsent::Unset, FIRST_OPEN, 5, None, None)
+                .unwrap()
+        );
+        assert!(manager.accept_download_id("site-download_1", 10).unwrap());
+        // The first id wins.
+        assert!(!manager.accept_download_id("site-download_2", 11).unwrap());
+        let reopened = AnalyticsManager::open(&directory.0).unwrap();
+        assert_eq!(
+            reopened.download_id().unwrap().as_deref(),
+            Some("site-download_1")
+        );
+
+        // The user agrees later. `first_open` carries the id.
+        record_if_consented(&reopened, AnalyticsConsent::On, FIRST_OPEN, 20, None, None).unwrap();
+        record_if_consented(
+            &reopened,
+            AnalyticsConsent::On,
+            "active_day",
+            20,
+            None,
+            None,
+        )
+        .unwrap();
+        let pending = reopened.pending().unwrap();
+        assert_eq!(pending[0].download_id.as_deref(), Some("site-download_1"));
+        assert_eq!(pending[1].download_id, None);
+        let serialized = serde_json::to_value(&pending[0]).unwrap();
+        assert_eq!(serialized["download_id"], "site-download_1");
+        assert!(serde_json::to_value(&pending[1])
+            .unwrap()
+            .get("download_id")
+            .is_none());
+
+        // After the server has `first_open`, Halv deletes the id and drops
+        // any later link.
+        reopened.acknowledge(&pending).unwrap();
+        assert_eq!(reopened.download_id().unwrap(), None);
+        assert!(!directory.0.join(ATTRIBUTION_FILE_NAME).exists());
+        assert!(!reopened.accept_download_id("site-download_3", 30).unwrap());
+        assert_eq!(reopened.download_id().unwrap(), None);
+    }
+
+    #[test]
+    fn download_id_that_arrives_shortly_after_first_open_joins_the_queued_event() {
+        let directory = TestDirectory::new("attribution-after-first-open");
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        manager.record(FIRST_OPEN, 100).unwrap();
+        assert_eq!(manager.pending().unwrap()[0].download_id, None);
+        assert!(manager.accept_download_id("late_link", 101).unwrap());
+        let reopened = AnalyticsManager::open(&directory.0).unwrap();
+        assert_eq!(
+            reopened.pending().unwrap()[0].download_id.as_deref(),
+            Some("late_link")
+        );
+        // Only `first_open` may carry the id.
+        let mut queue = AnalyticsQueue::default();
+        assert!(queue
+            .record("active_day", 1, None, None, Some("late_link".into()))
+            .is_err());
+    }
+
+    #[test]
+    fn damaged_attribution_file_counts_as_no_download_id() {
+        let directory = TestDirectory::new("attribution-damaged");
+        fs::write(directory.0.join(ATTRIBUTION_FILE_NAME), "{not json").unwrap();
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        assert_eq!(manager.download_id().unwrap(), None);
+        fs::write(
+            directory.0.join(ATTRIBUTION_FILE_NAME),
+            r#"{"download_id":"bad id","received_at":1}"#,
+        )
+        .unwrap();
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        assert_eq!(manager.download_id().unwrap(), None);
+        assert!(manager.accept_download_id("good_id", 2).unwrap());
+    }
+
+    #[tokio::test]
+    async fn server_without_download_id_support_gets_the_batch_again_without_it() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut data = Vec::new();
+                let mut buffer = [0; 8192];
+                loop {
+                    let size = stream.read(&mut buffer).unwrap_or(0);
+                    if size == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buffer[..size]);
+                    let text = String::from_utf8_lossy(&data).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let length = text[..end]
+                            .to_ascii_lowercase()
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if data.len() >= end + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let text = String::from_utf8_lossy(&data).to_string();
+                let body = text
+                    .split("\r\n\r\n")
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                let status = if body.contains("download_id") {
+                    "400 Bad Request"
+                } else {
+                    "200 OK"
+                };
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                bodies.push(body);
+            }
+            bodies
+        });
+        let directory = TestDirectory::new("attribution-old-server");
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        manager.accept_download_id("site_link", 1).unwrap();
+        manager
+            .record(FIRST_OPEN, unix_time_seconds().unwrap())
+            .unwrap();
+        flush_pending(&manager, &url, "1.0.0").await.unwrap();
+        let bodies = server.join().unwrap();
+        assert!(
+            bodies[0].contains(r#""download_id":"site_link""#),
+            "{}",
+            bodies[0]
+        );
+        assert!(!bodies[1].contains("download_id"), "{}", bodies[1]);
+        assert!(manager.pending().unwrap().is_empty());
+        assert_eq!(manager.download_id().unwrap(), None);
     }
 }

@@ -1,13 +1,15 @@
 import { ipc } from "../ipc";
 import type { KeyboardShortcutOverrides } from "../shortcuts";
-import type { TerminalEvent } from "../types";
+import type { AccountAuthStatus, TerminalEvent } from "../types";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { launchAgentLogin, listAgentSessionLaneOptions, probeAgentSessions, probeForAgent, type AgentSessionProbe, type AgentSessionLaneOptions } from "../agentSessions";
 import { useT } from "../i18n/runtime";
 import { useAgentCliInstall } from "../useAgentCliInstall";
 import { walletProviderName, walletStore, type WalletPendingAdd, type WalletProvider } from "../accountWallet";
 import { ACCOUNT_SWAP_NOTICE_PERCENT, accountSwapSetting } from "../accountSwap";
-import { AUTO_ROTATION_MAX_PERCENT, AUTO_ROTATION_MIN_START_PERCENT, autoRotationSetting, type AutoRotationSettings } from "../accountAutoRotation";
+import { AUTO_ROTATION_MAX_PERCENT, AUTO_ROTATION_MIN_START_PERCENT, autoRotationSetting, rotationCloudCardVisible, type AutoRotationSettings } from "../accountAutoRotation";
+import { cloudAccess } from "../halvCloud.ts";
+import { HalvCloudCard } from "./HalvCloudCard";
 import { AccountWalletList, useWalletSnapshot } from "./AccountWallet";
 import { TerminalPanel } from "./TerminalPanel";
 
@@ -53,6 +55,10 @@ export type SettingsConnectionsRequest = {
 };
 
 type Props = {
+  // The Halv account. Automatic rotation is part of Halv Cloud (ADR 0021).
+  account: AccountAuthStatus | null;
+  onAccountStatusChange: (status: AccountAuthStatus) => void;
+  onHalvSignIn: () => void;
   chatGptConnected: boolean;
   chatGptPending: boolean;
   logoutPending: boolean;
@@ -272,7 +278,7 @@ export function SettingsConnections(props: Props) {
         })}
       </div>
       <p className="text-xs leading-5 text-content-muted">{t("Your AI subscriptions are separate from your Halv plan.")}</p>
-      <AccountSwitchSettings />
+      <AccountSwitchSettings account={props.account} onAccountStatusChange={props.onAccountStatusChange} onHalvSignIn={props.onHalvSignIn} />
       {installer.progress ? <p className="text-xs text-content-muted" role="status">{installer.progress.line}</p> : null}
       {error || installer.error ? <p className="text-xs text-danger" role="alert">{error || installer.error?.message}</p> : null}
       <section className="settings-chat-connection">
@@ -301,17 +307,28 @@ export function SettingsConnections(props: Props) {
  * The account switch near usage limits: the assisted card, and the opt-in
  * automatic rotation of Claude accounts (ADR 0017). Both settings live in
  * the localStorage of this viewer. Halv switches without a click only when
- * the rotation is on.
+ * the rotation is on and the account has Halv Cloud access (ADR 0021).
+ * Without access, the checkbox keeps the choice and a Halv Cloud card shows
+ * under it.
  */
-function AccountSwitchSettings() {
+function AccountSwitchSettings({ account, onAccountStatusChange, onHalvSignIn }: { account: AccountAuthStatus | null; onAccountStatusChange: (status: AccountAuthStatus) => void; onHalvSignIn: () => void }) {
   const t = useT();
   const swapNotice = useSyncExternalStore(accountSwapSetting.subscribe, accountSwapSetting.getSnapshot, accountSwapSetting.getSnapshot);
   const rotation = useSyncExternalStore(autoRotationSetting.subscribe, autoRotationSetting.getSnapshot, autoRotationSetting.getSnapshot);
+  // Connections mounts for each visit, so this state lasts one visit.
+  const [cloudCardDismissed, setCloudCardDismissed] = useState(false);
+  const access = cloudAccess(account);
+  const showCloudCard = rotationCloudCardVisible({ ready: account !== null, settings: rotation, access, dismissedThisVisit: cloudCardDismissed });
   return (
     <div className="space-y-3" data-account-switch-settings>
       <label className="flex items-start gap-2 text-xs leading-5 text-content-secondary"><input type="checkbox" className="mt-1 accent-accent" checked={swapNotice} onChange={(event) => accountSwapSetting.set(event.target.checked)} /><span><span className="block text-content-primary">{t("Suggest an account switch near usage limits")}</span><span className="block text-content-muted">{t("At {percent}% of a limit, Halv offers the account with the most room.", { percent: ACCOUNT_SWAP_NOTICE_PERCENT })}</span></span></label>
       <div>
-        <label className="flex items-start gap-2 text-xs leading-5 text-content-secondary"><input type="checkbox" className="mt-1 accent-accent" checked={rotation.enabled} onChange={(event) => autoRotationSetting.set({ enabled: event.target.checked })} /><span><span className="block text-content-primary">{t("Rotate Claude accounts automatically")}</span><span className="block text-content-muted">{t("Between {start}% and {latest}% of a limit, Halv switches to the Claude account with the most room. It waits for a pause between turns until {latest}%.", { start: rotation.startPercent, latest: rotation.latestPercent })}</span></span></label>
+        <label className="flex items-start gap-2 text-xs leading-5 text-content-secondary"><input type="checkbox" className="mt-1 accent-accent" checked={rotation.enabled} onChange={(event) => { if (event.target.checked) setCloudCardDismissed(false); autoRotationSetting.set({ enabled: event.target.checked }); }} /><span><span className="block text-content-primary">{t("Rotate Claude accounts automatically")}</span><span className="block text-content-muted">{t("Between {start}% and {latest}% of a limit, Halv switches to the Claude account with the most room. It waits for a pause between turns until {latest}%.", { start: rotation.startPercent, latest: rotation.latestPercent })}</span></span></label>
+        {showCloudCard ? (
+          <div className="ml-6 mt-2">
+            <HalvCloudCard access={access} account={account} feature="rotation" onDismiss={() => setCloudCardDismissed(true)} onSignIn={onHalvSignIn} onStatusChange={onAccountStatusChange} placement="inline" />
+          </div>
+        ) : null}
         {rotation.enabled ? (
           <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
             <RotationPercentField field="startPercent" label={t("Start at")} min={AUTO_ROTATION_MIN_START_PERCENT} value={rotation.startPercent} />

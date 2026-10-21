@@ -85,7 +85,7 @@ export function LifetimeOffer({ account, checkout }: { account: AccountAuthStatu
       <p className="pb-1 text-xs leading-5 text-content-secondary">USD · {t("one time")}<br/><span className="text-content-muted">{t("No recurring Halv fee.")}</span></p>
     </div>
     <ul className="my-6 space-y-2.5 text-sm text-content-secondary">
-      {[t("Every Halv feature"), t("Unlimited token savings"), t("One payment. No renewals.")].map(benefit => <li key={benefit} className="flex items-center gap-2.5"><span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-bold text-accent-strong">✓</span>{benefit}</li>)}
+      {[t("Halv Cloud for life"), t("Task routing and automatic account rotation"), t("One payment. No renewals.")].map(benefit => <li key={benefit} className="flex items-center gap-2.5"><span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-bold text-accent-strong">✓</span>{benefit}</li>)}
     </ul>
     <div className="mt-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-accent/20 bg-surface-base/55 px-3 py-2.5 text-xs">

@@ -1,7 +1,7 @@
 # ADR 0018: The account gate opens after the first result
 
 Date: 2026-10-16
-Status: Accepted
+Status: Superseded by ADR 0021
 
 ## Context
 

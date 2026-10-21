@@ -5806,3 +5806,47 @@ a.bg-accent:hover {
 }
 
 .agent-sessions-open-in-tab button:hover { background: rgb(var(--accent-strong)); }
+
+/* Consent card and banner (ADR 0021). Both answers look the same on purpose. */
+.consent-choice {
+  padding: 7px 14px;
+  border: 1px solid rgb(var(--surface-border) / 0.5);
+  border-radius: 9px;
+  background: rgb(var(--surface-raised));
+  color: rgb(var(--content-primary));
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.consent-choice:hover:not(:disabled) {
+  border-color: rgb(var(--accent) / 0.55);
+  background: rgb(var(--accent) / 0.08);
+}
+
+.consent-choice:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+.consent-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.consent-details > summary::before {
+  content: "\25B8";
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s;
+}
+
+.consent-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.consent-banner {
+  flex-shrink: 0;
+}

@@ -5,6 +5,7 @@
   "webviews": ["main"],
   "permissions": [
     "core:default",
+    "deep-link:default",
     "dialog:allow-open",
     "dialog:allow-save",
     "notification:default",
@@ -82,6 +83,7 @@
     "allow-analytics-record",
     "allow-analytics-flush",
     "allow-analytics-install-id",
+    "allow-analytics-attribution-get",
     "allow-automation-list",
     "allow-automation-upsert",
     "allow-automation-set-enabled",
@@ -129,6 +131,7 @@
     "allow-preferences-set-claude-ultracode",
     "allow-preferences-set-routing-tier-agents",
     "allow-preferences-set-analytics-enabled",
+    "allow-preferences-set-analytics-consent",
     "allow-preferences-set-conversation-defaults",
     "allow-list-custom-prompts",
     "allow-project-add-local",

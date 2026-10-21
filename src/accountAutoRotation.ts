@@ -16,6 +16,7 @@ import type {
   WalletStaleSession,
 } from "./accountWallet.ts";
 import type { AgentSession } from "./agentSessions.ts";
+import type { CloudAccess } from "./halvCloud.ts";
 import type { ProviderPlanWindow } from "./providerPlanWindows.ts";
 
 export const AUTO_ROTATION_STORAGE_KEY = "halv.account-auto-rotation.v1";
@@ -131,6 +132,37 @@ export function createAutoRotationSetting(
 }
 
 export const autoRotationSetting = createAutoRotationSetting();
+
+/**
+ * True when Halv may switch accounts without a click. Automatic rotation is
+ * part of Halv Cloud (ADR 0021). Without access, the setting can stay on,
+ * but Halv does not switch, and the assisted card works as before.
+ */
+export function autoRotationActive(
+  settings: Pick<AutoRotationSettings, "enabled">,
+  access: Pick<CloudAccess, "granted">,
+) {
+  return settings.enabled && access.granted;
+}
+
+/**
+ * True when Settings shows the Halv Cloud card under the rotation checkbox:
+ * the setting is on, the account status is loaded, the account has no
+ * access, and the user did not choose "Keep going without it" in this visit.
+ */
+export function rotationCloudCardVisible({
+  ready,
+  settings,
+  access,
+  dismissedThisVisit,
+}: {
+  ready: boolean;
+  settings: Pick<AutoRotationSettings, "enabled">;
+  access: Pick<CloudAccess, "granted">;
+  dismissedThisVisit: boolean;
+}) {
+  return ready && settings.enabled && !access.granted && !dismissedThisVisit;
+}
 
 const LIVE_AGENT_STATUSES = new Set(["starting", "running", "waiting_input"]);
 

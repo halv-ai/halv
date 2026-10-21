@@ -1,14 +1,86 @@
-// The trial card opens only after Halv delivered value: a first completed
-// task on any lane, or a first measured saving (ADR 0018). Before that
-// moment, an anonymous user sends freely in any conversation.
-export function trialGateForSend({
-  signedIn,
+import type { CloudAccess } from "./halvCloud.ts";
+
+// The Halv Cloud pitch card (ADR 0021). It replaces the trial card of
+// ADR 0018. The card never blocks a send. It shows after the first result,
+// and its dismissal is permanent.
+export const CLOUD_PITCH_DISMISSED_STORAGE_KEY = "halv.cloudPitchDismissed";
+// The launch that first shows the card writes this key. Later launches
+// read it and keep the card hidden, so the card shows on one launch only.
+export const CLOUD_PITCH_SHOWN_STORAGE_KEY = "halv.cloudPitchShown";
+
+type PitchStorage = Pick<Storage, "getItem" | "setItem">;
+
+/**
+ * True when the pitch card shows: Halv delivered value, the account has no
+ * Halv Cloud plan yet, the user did not dismiss the card, and no earlier
+ * launch showed it. An account
+ * with a payment issue gets the payment card in Settings instead.
+ */
+export function cloudPitchVisible({
   valueDelivered,
+  access,
+  dismissed,
+  shownOnEarlierLaunch = false,
 }: {
-  signedIn: boolean;
   valueDelivered: boolean;
+  access: Pick<CloudAccess, "granted" | "reason">;
+  dismissed: boolean;
+  shownOnEarlierLaunch?: boolean;
 }) {
-  return !signedIn && valueDelivered;
+  if (!valueDelivered || dismissed || shownOnEarlierLaunch || access.granted) {
+    return false;
+  }
+  return access.reason === "signed_out" || access.reason === "no_plan";
+}
+
+export function readCloudPitchDismissed(
+  storage: PitchStorage | null = browserStorage(),
+) {
+  try {
+    return storage?.getItem(CLOUD_PITCH_DISMISSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Records the dismissal. A start of checkout also dismisses the card. */
+export function writeCloudPitchDismissed(
+  storage: PitchStorage | null = browserStorage(),
+) {
+  try {
+    storage?.setItem(CLOUD_PITCH_DISMISSED_STORAGE_KEY, "1");
+  } catch {
+    // The in-memory flag still hides the card for this launch.
+  }
+}
+
+export function readCloudPitchShown(
+  storage: PitchStorage | null = browserStorage(),
+) {
+  try {
+    return storage?.getItem(CLOUD_PITCH_SHOWN_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Records that the card showed. App calls it when the card first renders. */
+export function writeCloudPitchShown(
+  storage: PitchStorage | null = browserStorage(),
+) {
+  try {
+    storage?.setItem(CLOUD_PITCH_SHOWN_STORAGE_KEY, "1");
+  } catch {
+    // The card then shows again on the next launch.
+  }
+}
+
+function browserStorage(): PitchStorage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 export type TerminalPromptSubmissionTracker = {

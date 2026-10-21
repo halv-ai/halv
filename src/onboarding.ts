@@ -26,6 +26,99 @@ export function shouldShowWelcomeScreen({
   return !welcomeSeen && (connectionRequired || replayOnboarding);
 }
 
+/** The saved answer to the usage-events question (ADR 0021). */
+export type ConsentAnswer = "unset" | "on" | "off";
+
+// Halv sends no usage event until the user answers "on". An install that
+// upgraded from the old default (events on, never asked) starts as "unset".
+// Every surface asks until the user answers, so the result depends on the
+// consent only. `welcomeSeen` stays in the contract so each caller states
+// both facts: the welcome screen asks while it shows, and the banner asks
+// after it. `null` means the saved preference has not loaded yet.
+export function shouldAskConsent({
+  consent,
+}: {
+  consent: ConsentAnswer | null | undefined;
+  welcomeSeen: boolean;
+}) {
+  return consent === "unset";
+}
+
+// The banner at the top of the main column asks an install that has no
+// answer yet, for example an install that upgraded from the old default.
+// The welcome screen and the first-run card have their own ask card, and
+// the prepared first task needs the full column. The banner stays hidden
+// while one of them shows, so the app never shows two asks at once.
+// The banner shows on one launch only. `shownOnEarlierLaunch` is true when
+// an earlier launch showed it. The answer then stays "unset", so Halv sends
+// nothing, and Settings > Privacy keeps the toggle.
+export function shouldShowConsentBanner({
+  consent,
+  welcomeScreenShown,
+  firstTaskShown,
+  shownOnEarlierLaunch = false,
+}: {
+  consent: ConsentAnswer | null | undefined;
+  welcomeScreenShown: boolean;
+  firstTaskShown: boolean;
+  shownOnEarlierLaunch?: boolean;
+}) {
+  return (
+    !shownOnEarlierLaunch &&
+    shouldAskConsent({ consent, welcomeSeen: !welcomeScreenShown }) &&
+    !welcomeScreenShown &&
+    !firstTaskShown
+  );
+}
+
+export const CONSENT_BANNER_SHOWN_STORAGE_KEY = "halv.consentBannerShown";
+
+export function readConsentBannerShown(
+  storage: OnboardingStorage | null = browserStorage(),
+): boolean {
+  try {
+    return storage?.getItem(CONSENT_BANNER_SHOWN_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Records that the consent banner showed, so later launches hide it. */
+export function writeConsentBannerShown(
+  storage: OnboardingStorage | null = browserStorage(),
+) {
+  try {
+    storage?.setItem(CONSENT_BANNER_SHOWN_STORAGE_KEY, "1");
+  } catch {
+    // The banner then shows again on the next launch. Halv still sends nothing.
+  }
+}
+
+// The welcome screen informs about Halv Cloud once (ADR 0021). An install
+// that skips the welcome screen, for example because a Claude or Codex CLI
+// is already connected, sees the same block once in the first-run card.
+export const CLOUD_INFO_SEEN_STORAGE_KEY = "halv.cloudInfoSeen";
+
+export function readCloudInfoSeen(
+  storage: OnboardingStorage | null = browserStorage(),
+): boolean {
+  try {
+    return storage?.getItem(CLOUD_INFO_SEEN_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeCloudInfoSeen(
+  storage: OnboardingStorage | null = browserStorage(),
+) {
+  try {
+    storage?.setItem(CLOUD_INFO_SEEN_STORAGE_KEY, "1");
+  } catch {
+    // The block then shows again on the next launch.
+  }
+}
+
 export function conversationIdToRestore({
   lastActiveConversationId,
   replayOnboarding,

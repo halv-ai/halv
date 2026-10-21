@@ -19,8 +19,8 @@ use crate::{
     },
     task_hierarchy::Graph,
     task_routing::{
-        self, Catalog, LadderTier, Lane, LaneState, LaneStates, RoutingInput, RoutingResult,
-        TierAgentAssignments, WorkerLane, WorkflowRole, WorkflowRoutingInput,
+        self, Catalog, LadderTier, Lane, LaneState, LaneStates, RoutingInput, RoutingReason,
+        RoutingResult, TierAgentAssignments, WorkerLane, WorkflowRole, WorkflowRoutingInput,
         DEFAULT_RESERVE_PERCENT,
     },
 };
@@ -32,6 +32,17 @@ const SAVINGS_RESOURCE_URI: &str = "savings://current";
 const ROUTE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const QUOTA_PROBE_ENVIRONMENT_VARIABLE: &str = "HALV_ROUTING_QUOTA_PROBE";
 const SIGN_IN_MESSAGE: &str = "Sign in to your Halv account to route tasks.";
+/// The reason and the provider of a route when the user has no Halv Cloud
+/// access (ADR 0021).
+const HALV_CLOUD_REQUIRED: &str = "halv_cloud_required";
+const HALV_CLOUD_REQUIRED_MESSAGE: &str =
+    "Task routing needs Halv Cloud. The coordinator does this task itself.";
+/// The reason and the provider of a route when Halv has no valid session:
+/// the user is signed out, the session expired, or the token is unreadable.
+const SIGN_IN_REQUIRED: &str = "sign_in_required";
+const SIGN_IN_REQUIRED_MESSAGE: &str =
+    "Sign in to your Halv account to route tasks. The coordinator does this task itself.";
+const EXECUTE_IN_PARENT: &str = "execute_in_parent";
 const STORAGE_NOT_READY_MESSAGE: &str = "Halv task routing storage is not ready. Restart Halv.";
 const MAX_TASK_TITLE_CHARS: usize = 120;
 const WORKFLOW_ROUTING_OFF_MESSAGE: &str =
@@ -48,6 +59,37 @@ const MAX_REPORTED_AGENTS: i64 = 1_000;
 /// JEV answers several briefs at once. The server has no rate limit on
 /// `/v1/route`, and eight requests keep a 64-entry batch near ten seconds.
 const WORKFLOW_DECISION_CONCURRENCY: usize = 8;
+
+/// Why JEV gave no route decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DecisionError {
+    /// Halv has no valid session: the user is signed out, the token is
+    /// unreadable, or the server refused the session with HTTP 401.
+    SignInRequired,
+    /// The server refused the account with HTTP 402 or 403. Task routing is
+    /// part of Halv Cloud (ADR 0021).
+    CloudRequired,
+    Failed(String),
+}
+
+impl DecisionError {
+    fn message(&self) -> String {
+        match self {
+            Self::SignInRequired => SIGN_IN_REQUIRED_MESSAGE.to_string(),
+            Self::CloudRequired => HALV_CLOUD_REQUIRED_MESSAGE.to_string(),
+            Self::Failed(message) => message.clone(),
+        }
+    }
+
+    /// The route reason when the coordinator does the task itself.
+    fn parent_reason(&self) -> Option<RoutingReason> {
+        match self {
+            Self::SignInRequired => Some(RoutingReason::SignInRequired),
+            Self::CloudRequired => Some(RoutingReason::CloudRequired),
+            Self::Failed(_) => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SavingsMcpLaunchConfig {
@@ -602,21 +644,32 @@ impl SavingsReader {
         })
     }
 
-    fn fetch_decision(&self, brief: &str) -> Result<crate::auth::RouteDecision, String> {
-        let (server_url, token) = self.halv_session()?;
-        let runtime = self.runtime()?;
+    /// Without a valid session the user must sign in first.
+    fn fetch_decision(&self, brief: &str) -> Result<crate::auth::RouteDecision, DecisionError> {
+        let (server_url, token) = self
+            .halv_session()
+            .map_err(|_| DecisionError::SignInRequired)?;
+        let runtime = self.runtime().map_err(DecisionError::Failed)?;
         runtime.block_on(request_decision(&server_url, &token, brief))
     }
 
     /// Fetches one decision for each brief, eight at a time, in input order.
     /// A failure of one brief does not stop the others.
-    fn fetch_decisions(&self, briefs: &[&str]) -> Vec<Result<crate::auth::RouteDecision, String>> {
+    fn fetch_decisions(
+        &self,
+        briefs: &[&str],
+    ) -> Vec<Result<crate::auth::RouteDecision, DecisionError>> {
         let session = self
             .halv_session()
-            .and_then(|session| self.runtime().map(|runtime| (session, runtime)));
+            .map_err(|_| DecisionError::SignInRequired)
+            .and_then(|session| {
+                self.runtime()
+                    .map(|runtime| (session, runtime))
+                    .map_err(DecisionError::Failed)
+            });
         let ((server_url, token), runtime) = match session {
             Ok(session) => session,
-            Err(message) => return briefs.iter().map(|_| Err(message.clone())).collect(),
+            Err(error) => return briefs.iter().map(|_| Err(error.clone())).collect(),
         };
         runtime.block_on(
             futures_util::stream::iter(
@@ -720,7 +773,16 @@ impl SavingsReader {
         title: Option<&str>,
         worker_lane: WorkerLane,
     ) -> Result<(TaskRoute, crate::auth::RouteDecision), String> {
-        let decision = self.fetch_decision(brief)?;
+        let decision = match self.fetch_decision(brief) {
+            Ok(decision) => decision,
+            Err(DecisionError::Failed(message)) => return Err(message),
+            Err(error) => {
+                let reason = error
+                    .parent_reason()
+                    .unwrap_or(RoutingReason::CloudRequired);
+                return Ok(self.cloud_required_route(brief, title, worker_lane, reason));
+            }
+        };
         let (coordinator_lane, _) = self.coordinator();
         let tier_agents = self.tier_agents.clone();
         let input = RoutingInput {
@@ -738,6 +800,30 @@ impl SavingsReader {
         );
         let route = self.new_task_route(&decision, &result, brief, title, None, worker_lane);
         Ok((route, decision))
+    }
+
+    /// The route without Halv Cloud access or without a valid session: the
+    /// coordinator does the task itself at its own tier. The answer is a
+    /// normal route, never an error, so the agent keeps working (ADR 0021).
+    fn cloud_required_route(
+        &self,
+        brief: &str,
+        title: Option<&str>,
+        worker_lane: WorkerLane,
+        reason: RoutingReason,
+    ) -> (TaskRoute, crate::auth::RouteDecision) {
+        let decision = parent_route_decision(reason);
+        let (coordinator_lane, _) = self.coordinator();
+        let result = RoutingResult {
+            tier: LadderTier::Max,
+            // A hierarchy route must stay in the lane of its parent.
+            lane: worker_lane.fixed().unwrap_or(coordinator_lane),
+            model: None,
+            effort: None,
+            reasons: vec![reason],
+        };
+        let route = self.new_task_route(&decision, &result, brief, title, None, worker_lane);
+        (route, decision)
     }
 
     fn report_task_result(&self, task_id: &str, passed: bool) -> Result<Value, String> {
@@ -1042,11 +1128,13 @@ impl SavingsReader {
         let batch_id = crate::storage::new_uuid_v4();
         let mut planned = Vec::new();
         let mut fallback = Map::new();
+        let mut parent_reason: Option<RoutingReason> = None;
         for (task, decision) in request.tasks.iter().zip(decisions) {
             let (decision, fell_back) = match decision {
                 Ok(decision) => (decision, false),
-                Err(message) => {
-                    fallback.insert(task.key.clone(), Value::String(message));
+                Err(error) => {
+                    parent_reason = parent_reason.or(error.parent_reason());
+                    fallback.insert(task.key.clone(), Value::String(error.message()));
                     (fallback_decision(), true)
                 }
             };
@@ -1094,7 +1182,11 @@ impl SavingsReader {
         transaction
             .commit()
             .map_err(|_| STORAGE_NOT_READY_MESSAGE.to_string())?;
-        Ok(route_tasks_result(&batch_id, &default, &planned, &fallback))
+        let mut result = route_tasks_result(&batch_id, &default, &planned, &fallback);
+        if let Some(reason) = parent_reason {
+            result["structuredContent"]["reason"] = Value::String(reason.as_str().to_string());
+        }
+        Ok(result)
     }
 
     /// Records the outcome and the receipt of each route of one finished
@@ -1369,7 +1461,7 @@ async fn request_decision(
     server_url: &str,
     token: &str,
     brief: &str,
-) -> Result<crate::auth::RouteDecision, String> {
+) -> Result<crate::auth::RouteDecision, DecisionError> {
     let response = crate::auth::api_client()
         .post(crate::auth::api_url(server_url, "/v1/route"))
         .bearer_auth(token)
@@ -1377,17 +1469,28 @@ async fn request_decision(
         .timeout(ROUTE_REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|error| format!("Could not route task: {error}"))?;
+        .map_err(|error| DecisionError::Failed(format!("Could not route task: {error}")))?;
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("Could not read the route response: {error}"))?;
-    if !status.is_success() {
-        return Err(format!("Could not route task (HTTP {status})."));
+    // The server refuses an expired session (401). The user must sign in
+    // again. It refuses an account without a plan that includes Halv Cloud
+    // with 402 or 403.
+    if status.as_u16() == 401 {
+        return Err(DecisionError::SignInRequired);
     }
-    serde_json::from_str::<crate::auth::RouteDecision>(&body)
-        .map_err(|error| format!("The route response was not valid JSON: {error}"))
+    if matches!(status.as_u16(), 402 | 403) {
+        return Err(DecisionError::CloudRequired);
+    }
+    let body = response.text().await.map_err(|error| {
+        DecisionError::Failed(format!("Could not read the route response: {error}"))
+    })?;
+    if !status.is_success() {
+        return Err(DecisionError::Failed(format!(
+            "Could not route task (HTTP {status})."
+        )));
+    }
+    serde_json::from_str::<crate::auth::RouteDecision>(&body).map_err(|error| {
+        DecisionError::Failed(format!("The route response was not valid JSON: {error}"))
+    })
 }
 
 /// The model and the effort that a worker inherits without JEV, and their
@@ -1414,6 +1517,16 @@ fn require_workflow_columns(connection: &Connection) -> Result<(), String> {
     match crate::storage::task_route_workflow_columns_exist(connection) {
         Ok(true) => Ok(()),
         _ => Err(STORAGE_NOT_READY_MESSAGE.to_string()),
+    }
+}
+
+/// The stored decision of a route that the coordinator does itself: no Halv
+/// Cloud access (`halv_cloud_required`) or no valid session
+/// (`sign_in_required`).
+fn parent_route_decision(reason: RoutingReason) -> crate::auth::RouteDecision {
+    crate::auth::RouteDecision {
+        provider: reason.as_str().to_string(),
+        ..fallback_decision()
     }
 }
 
@@ -1898,6 +2011,13 @@ struct RouteToolPayload<'a> {
     provider: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     escalated_from: Option<&'a str>,
+    /// Only on a route without Halv Cloud access: `execute_in_parent`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action: Option<&'a str>,
+    /// Only on a route that runs in the parent: `halv_cloud_required` or
+    /// `sign_in_required`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
 }
 
 /// Build the MCP answer with one JSON line and the worker instruction.
@@ -1906,6 +2026,19 @@ fn route_tool_result(
     decision: &crate::auth::RouteDecision,
     escalated_from: Option<&str>,
 ) -> Value {
+    // A route without Halv Cloud access or without a valid session runs in
+    // the parent. The reason tells the agent which one.
+    let parent_reason = route
+        .reasons
+        .iter()
+        .map(String::as_str)
+        .find(|reason| *reason == HALV_CLOUD_REQUIRED || *reason == SIGN_IN_REQUIRED);
+    let cloud_required = parent_reason.is_some();
+    let parent_message = if parent_reason == Some(SIGN_IN_REQUIRED) {
+        SIGN_IN_REQUIRED_MESSAGE
+    } else {
+        HALV_CLOUD_REQUIRED_MESSAGE
+    };
     let payload = RouteToolPayload {
         task_id: &route.id,
         tier: &route.tier,
@@ -1919,9 +2052,15 @@ fn route_tool_result(
         risky: route.risky,
         provider: &decision.provider,
         escalated_from,
+        action: cloud_required.then_some(EXECUTE_IN_PARENT),
+        reason: parent_reason,
     };
     let json_line = serde_json::to_string(&payload).unwrap_or_default();
     let instruction = match (route.tier.as_str(), route.lane.as_str(), route.model.as_deref(), route.effort.as_deref()) {
+        ("max", _, _, _) if cloud_required => format!(
+            "{parent_message} Do this task yourself at the coordinator tier. \
+             Do not spawn a worker for it."
+        ),
         ("max", _, _, _) => "Do this task yourself at the coordinator tier.".to_string(),
         (_, "codex", Some(model), Some(effort)) => format!(
             "Call native spawn_agent now for this brief with model {model} and reasoning_effort {effort}. \
@@ -4050,5 +4189,212 @@ mod tests {
                 .map(OsString::from)
         )
         .is_err());
+    }
+
+    /// Answers every route request with one HTTP status and no body.
+    fn spawn_refusing_route_server(status: &'static str) -> String {
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("mock route server should bind");
+        let address = listener
+            .local_addr()
+            .expect("mock route server should report its address");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer);
+                let response =
+                    format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://127.0.0.1:{}", address.port())
+    }
+
+    fn sign_in_fixture(path: &Path, server_url: &str) {
+        Connection::open(path)
+            .expect("fixture database should reopen")
+            .execute(
+                "INSERT INTO auth_session (id, server_url, token) VALUES (1, ?1, ?2)",
+                params![server_url, "test-token"],
+            )
+            .expect("auth session should insert");
+    }
+
+    fn assert_cloud_required_route(
+        reader: &SavingsReader,
+        path: &Path,
+        case: &str,
+        expected_reason: &str,
+    ) {
+        let response = call_tool(
+            reader,
+            1,
+            "route_task",
+            json!({ "brief": "Fix the login button" }),
+        );
+        let result = &response["result"];
+        assert_eq!(result["isError"], false, "{case}: {response}");
+        let payload = &result["structuredContent"];
+        assert_eq!(payload["tier"], "max", "{case}");
+        assert_eq!(payload["action"], EXECUTE_IN_PARENT, "{case}");
+        assert_eq!(payload["reason"], expected_reason, "{case}");
+        assert_eq!(payload["reasons"], json!([expected_reason]), "{case}");
+        assert_eq!(payload["provider"], expected_reason, "{case}");
+        assert_eq!(payload["model"], Value::Null, "{case}");
+        assert_eq!(payload["effort"], Value::Null, "{case}");
+        let text = result["content"][0]["text"].as_str().expect("route text");
+        assert!(
+            text.contains("Do this task yourself at the coordinator tier"),
+            "{case}: {text}"
+        );
+        let expected_message = if expected_reason == SIGN_IN_REQUIRED {
+            SIGN_IN_REQUIRED_MESSAGE
+        } else {
+            HALV_CLOUD_REQUIRED_MESSAGE
+        };
+        assert!(text.contains(expected_message), "{case}: {text}");
+        assert!(!text.contains("spawn_agent now"), "{case}: {text}");
+
+        let routes = stored_routes(path);
+        assert_eq!(routes.len(), 1, "{case}");
+        assert_eq!(routes[0].tier, "max", "{case}");
+        assert_eq!(routes[0].provider, expected_reason, "{case}");
+        assert_eq!(routes[0].reasons, vec![expected_reason.to_string()]);
+
+        // The coordinator can still report the task like any other route.
+        let report = call_tool(
+            reader,
+            2,
+            "report_task_result",
+            json!({ "taskId": payload["taskId"], "passed": true }),
+        );
+        assert_eq!(report["result"]["isError"], false, "{case}: {report}");
+    }
+
+    #[test]
+    fn route_task_without_halv_cloud_tells_the_coordinator_to_do_the_task() {
+        std::env::set_var(QUOTA_PROBE_ENVIRONMENT_VARIABLE, "off");
+        let (reader, path) = fixture_reader();
+        // A signed-out user and an expired session must sign in. They do not
+        // hear that a paid plan is missing.
+        assert_cloud_required_route(&reader, &path, "signed out", SIGN_IN_REQUIRED);
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+
+        for (status, expected_reason) in [
+            ("401 Unauthorized", SIGN_IN_REQUIRED),
+            ("402 Payment Required", HALV_CLOUD_REQUIRED),
+            ("403 Forbidden", HALV_CLOUD_REQUIRED),
+        ] {
+            let (reader, path) = fixture_reader();
+            sign_in_fixture(&path, &spawn_refusing_route_server(status));
+            assert_cloud_required_route(&reader, &path, status, expected_reason);
+            drop(reader);
+            let _ = std::fs::remove_file(path);
+        }
+
+        // Other server failures keep the old error answer.
+        let (reader, path) = fixture_reader();
+        sign_in_fixture(&path, &spawn_refusing_route_server("502 Bad Gateway"));
+        let response = call_tool(
+            &reader,
+            1,
+            "route_task",
+            json!({ "brief": "Fix the login button" }),
+        );
+        assert_eq!(response["result"]["isError"], true, "{response}");
+        assert!(stored_routes(&path).is_empty());
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn hierarchy_without_halv_cloud_executes_in_the_parent() {
+        std::env::set_var(QUOTA_PROBE_ENVIRONMENT_VARIABLE, "off");
+        let (mut reader, path) = fixture_reader_with_worker_lane(WorkerLane::Fixed(Lane::Codex));
+        reader.coordinator_model = Some("gpt-6-astra".into());
+        let investigation = call_tool(
+            &reader,
+            1,
+            "route_task",
+            json!({"stage":"investigation","brief":"Fix the parser","workerLane":"codex"}),
+        );
+        assert_eq!(investigation["result"]["isError"], false, "{investigation}");
+        let root_id = investigation["result"]["structuredContent"]["taskId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let report = call_tool(
+            &reader,
+            2,
+            "report_task_result",
+            json!({"taskId":root_id,"passed":true,"evidence":"Parser owns src/parser.rs."}),
+        );
+        assert_eq!(report["result"]["isError"], false, "{report}");
+
+        let l1 = call_tool(
+            &reader,
+            3,
+            "route_task",
+            json!({"stage":"l1","parentTaskId":root_id,"brief":"Fix the parser","workerLane":"codex"}),
+        );
+        assert_eq!(l1["result"]["isError"], false, "{l1}");
+        let payload = &l1["result"]["structuredContent"];
+        assert_eq!(payload["action"], EXECUTE_IN_PARENT, "{l1}");
+        assert_eq!(payload["tier"], "max", "{l1}");
+        // The fixture has no session, so the user must sign in.
+        assert_eq!(payload["reason"], SIGN_IN_REQUIRED, "{l1}");
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn route_tasks_without_halv_cloud_lets_every_stage_inherit() {
+        std::env::set_var(QUOTA_PROBE_ENVIRONMENT_VARIABLE, "off");
+        let (reader, path) = fixture_reader();
+        let response = call_tool(
+            &reader,
+            1,
+            "route_tasks",
+            json!({
+                "workflow": "fix-findings",
+                "tasks": [
+                    {"key": "fix", "role": "implement", "brief": "Fix one finding."},
+                    {"key": "check", "role": "verify", "brief": "Review the fix."},
+                ],
+            }),
+        );
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(structured["reason"], SIGN_IN_REQUIRED);
+        for key in ["fix", "check"] {
+            assert_eq!(structured["fallback"][key], SIGN_IN_REQUIRED_MESSAGE);
+            assert_eq!(structured["routes"][key]["reasons"], json!(["fallback"]));
+        }
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+
+        // A refused plan names Halv Cloud.
+        let (reader, path) = fixture_reader();
+        sign_in_fixture(&path, &spawn_refusing_route_server("402 Payment Required"));
+        let response = call_tool(
+            &reader,
+            1,
+            "route_tasks",
+            json!({
+                "workflow": "fix-findings",
+                "tasks": [{"key": "fix", "role": "implement", "brief": "Fix one finding."}],
+            }),
+        );
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        let structured = &response["result"]["structuredContent"];
+        assert_eq!(structured["reason"], HALV_CLOUD_REQUIRED);
+        assert_eq!(structured["fallback"]["fix"], HALV_CLOUD_REQUIRED_MESSAGE);
+        drop(reader);
+        let _ = std::fs::remove_file(path);
     }
 }

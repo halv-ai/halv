@@ -5,7 +5,8 @@ import type { ConversationMode } from "../conversationMode";
 import type { FirstTaskGoal } from "../onboarding";
 import { useT, type Translate } from "../i18n/runtime";
 import { StepIndicator } from "./StepIndicator";
-import { AnonymousUsagePreference } from "./AnonymousUsagePreference";
+import { ConsentCard } from "./AnonymousUsagePreference";
+import { HalvPlans } from "./WelcomeScreen";
 
 type FirstRunCardProps = {
   variant: FirstRunVariant;
@@ -15,6 +16,8 @@ type FirstRunCardProps = {
   onDismiss: () => void;
   onOpenPrivacySettings: () => void;
   onPickProject: () => void;
+  /** True on the one launch that shows the Halv Cloud information block. */
+  showCloudInfo?: boolean;
 };
 
 export function FirstRunCard({
@@ -25,6 +28,7 @@ export function FirstRunCard({
   onDismiss,
   onOpenPrivacySettings,
   onPickProject,
+  showCloudInfo = false,
 }: FirstRunCardProps) {
   const t = useT();
   const connectedAgent = connectedAgentLabel(variant, t);
@@ -131,8 +135,9 @@ export function FirstRunCard({
       <p className="mt-3 text-xs leading-5 text-content-muted">
         {t("You review the first prompt before it runs.")}
       </p>
+      {showCloudInfo ? <HalvPlans /> : null}
       <footer className="mt-6 space-y-2 border-t border-surface-border/20 pt-4">
-        <AnonymousUsagePreference />
+        <ConsentCard variant="ask" />
         <button
           className="rounded text-xs text-content-muted underline underline-offset-4 hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/40"
           onClick={onOpenPrivacySettings}

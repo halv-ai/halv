@@ -1,6 +1,6 @@
 [package]
 name = "halv"
-version = "0.8.2"
+version = "1.0.0"
 description = "Halv desktop app"
 authors = ["Halv"]
 edition = "2021"
@@ -42,6 +42,8 @@ sha2 = "0.10.9"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tar = "0.4"
 tauri = { version = "2", features = ["image-png", "tray-icon", "macos-private-api", "unstable"] }
+# Opens halv://welcome?d=<download_id> from the Halv site (ADR 0021).
+tauri-plugin-deep-link = "2.4.10"
 tauri-plugin-dialog = "2.0.0-rc.8"
 tauri-plugin-notification = "2.0.0-rc.5"
 tauri-plugin-opener = "2.5.4"

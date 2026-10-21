@@ -14,7 +14,9 @@ import {
   savedLabel,
   sortRoutesNewestFirst,
   sortTaskBoardRoutes,
+  splitHalvCloudFallbackRoutes,
   taskRouteModelLabel,
+  taskRouteReasonLabel,
   summarizeRoutes,
   taskRouteDismissalsStorageKey,
   tierWeight,
@@ -470,4 +472,19 @@ test("the routing header never shows a loss", () => {
     routingSavingsLabel({ state: "not_estimated" }, t, money),
     "Routing savings not estimated yet",
   );
+});
+
+test("routes without Halv Cloud leave the board list and name the reason", () => {
+  const routes = [
+    route({ id: "real" }),
+    route({ id: "cloud", tier: "max", reasons: ["halv_cloud_required"] }),
+    route({ id: "session", tier: "max", reasons: ["sign_in_required"] }),
+  ];
+  const { routed, fallbackCount } = splitHalvCloudFallbackRoutes(routes);
+  assert.deepEqual(routed.map((entry) => entry.id), ["real"]);
+  assert.equal(fallbackCount, 2);
+  const t = (key: string) => key;
+  assert.equal(taskRouteReasonLabel("halv_cloud_required", t), "Needs Halv Cloud");
+  assert.equal(taskRouteReasonLabel("sign_in_required", t), "Sign in needed");
+  assert.equal(taskRouteReasonLabel("difficulty", t), "difficulty");
 });

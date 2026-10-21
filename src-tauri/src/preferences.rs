@@ -40,6 +40,30 @@ impl Personality {
     }
 }
 
+/// The answer of the user to the usage events question (ADR 0021).
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsConsent {
+    /// The user did not answer yet. Halv sends no event.
+    #[default]
+    Unset,
+    /// The user agreed. Halv sends the journey events.
+    On,
+    /// The user said no. Halv sends no event.
+    Off,
+}
+
+impl AnalyticsConsent {
+    /// Converts a preferences file without `analyticsConsent`. The old default
+    /// sent events and never asked, so only an explicit `false` is an answer.
+    fn from_legacy_analytics_enabled(analytics_enabled: Option<bool>) -> Self {
+        match analytics_enabled {
+            Some(false) => Self::Off,
+            _ => Self::Unset,
+        }
+    }
+}
+
 /// The lane the user forces on every worker. `Auto` follows the coordinator.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -79,6 +103,10 @@ pub struct AgentPreferences {
     pub workflow_routing: bool,
     /// New Claude panes start with ultracode on.
     pub claude_ultracode: bool,
+    /// Halv sends usage events only when this is `On` (ADR 0021).
+    pub analytics_consent: AnalyticsConsent,
+    /// Always `analytics_consent == On`. The file keeps it for older app
+    /// versions. On load, it is only the input of the migration.
     pub analytics_enabled: bool,
     pub default_model: Option<String>,
     pub default_effort: Option<String>,
@@ -115,7 +143,8 @@ impl Default for AgentPreferences {
             routing_tier_agents: TierAgentAssignments::default(),
             workflow_routing: true,
             claude_ultracode: false,
-            analytics_enabled: true,
+            analytics_consent: AnalyticsConsent::Unset,
+            analytics_enabled: false,
             default_model: None,
             default_effort: None,
             default_agent_mode: true,
@@ -140,7 +169,7 @@ impl PreferencesManager {
         fs::create_dir_all(app_data_dir)?;
         let path = app_data_dir.join(PREFERENCES_FILE_NAME);
         let preferences = match fs::read(&path) {
-            Ok(contents) => serde_json::from_slice::<AgentPreferences>(&contents)
+            Ok(contents) => parse_preferences(&contents)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => AgentPreferences::default(),
             Err(error) => return Err(error),
@@ -210,8 +239,14 @@ impl PreferencesManager {
         self.get().map(|preferences| preferences.claude_ultracode)
     }
 
+    /// True only when the user agreed to usage events.
     pub fn analytics_enabled(&self) -> Result<bool, String> {
-        self.get().map(|preferences| preferences.analytics_enabled)
+        self.analytics_consent()
+            .map(|consent| consent == AnalyticsConsent::On)
+    }
+
+    pub fn analytics_consent(&self) -> Result<AnalyticsConsent, String> {
+        self.get().map(|preferences| preferences.analytics_consent)
     }
 
     pub fn app_update_auto_download(&self) -> Result<bool, String> {
@@ -389,16 +424,28 @@ impl PreferencesManager {
         Ok(next)
     }
 
-    pub fn set_analytics_enabled(
+    /// Saves the answer of the user. `Unset` is not an answer.
+    ///
+    /// An "off" answer fails closed: the running session stops events
+    /// before the write, so a failed write still keeps the "no". The error
+    /// tells the caller that the answer did not persist.
+    pub fn set_analytics_consent(
         &self,
-        analytics_enabled: bool,
+        consent: AnalyticsConsent,
     ) -> Result<AgentPreferences, String> {
+        if consent == AnalyticsConsent::Unset {
+            return Err("Usage events consent must be on or off".to_string());
+        }
         let mut current = self
             .preferences
             .write()
             .map_err(|_| "Preferences lock is poisoned".to_string())?;
         let mut next = current.clone();
-        next.analytics_enabled = analytics_enabled;
+        next.analytics_consent = consent;
+        next.analytics_enabled = consent == AnalyticsConsent::On;
+        if consent == AnalyticsConsent::Off {
+            *current = next.clone();
+        }
         write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
         *current = next.clone();
         Ok(next)
@@ -487,6 +534,23 @@ impl PreferencesManager {
         *current = next.clone();
         Ok(next)
     }
+}
+
+/// Reads a preferences file. A file without `analyticsConsent` comes from a
+/// version that sent usage events without asking (ADR 0021).
+fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
+    let value = serde_json::from_slice::<serde_json::Value>(contents)?;
+    let has_consent = value.get("analyticsConsent").is_some();
+    let legacy_analytics_enabled = value
+        .get("analyticsEnabled")
+        .and_then(serde_json::Value::as_bool);
+    let mut preferences = serde_json::from_value::<AgentPreferences>(value)?;
+    if !has_consent {
+        preferences.analytics_consent =
+            AnalyticsConsent::from_legacy_analytics_enabled(legacy_analytics_enabled);
+    }
+    preferences.analytics_enabled = preferences.analytics_consent == AnalyticsConsent::On;
+    Ok(preferences)
 }
 
 fn normalize_required_preference(value: String, label: &str) -> Result<String, String> {
@@ -701,16 +765,37 @@ pub fn preferences_set_routing_tier_agents(
 }
 
 #[tauri::command]
+pub fn preferences_set_analytics_consent(
+    manager: tauri::State<'_, PreferencesManager>,
+    analytics: tauri::State<'_, crate::analytics::AnalyticsManager>,
+    consent: AnalyticsConsent,
+) -> Result<AgentPreferences, String> {
+    // An "off" answer holds for the running session also when a write fails.
+    // The manager keeps the answer in memory, and the queue drops its events
+    // before the result goes back.
+    let preferences = manager.set_analytics_consent(consent);
+    if consent != AnalyticsConsent::On {
+        analytics.clear_pending()?;
+    }
+    preferences
+}
+
+/// The older boolean form of `preferences_set_analytics_consent`.
+#[tauri::command]
 pub fn preferences_set_analytics_enabled(
     manager: tauri::State<'_, PreferencesManager>,
     analytics: tauri::State<'_, crate::analytics::AnalyticsManager>,
     analytics_enabled: bool,
 ) -> Result<AgentPreferences, String> {
-    let preferences = manager.set_analytics_enabled(analytics_enabled)?;
-    if !analytics_enabled {
-        analytics.clear_pending()?;
-    }
-    Ok(preferences)
+    preferences_set_analytics_consent(
+        manager,
+        analytics,
+        if analytics_enabled {
+            AnalyticsConsent::On
+        } else {
+            AnalyticsConsent::Off
+        },
+    )
 }
 
 #[tauri::command]
@@ -1029,21 +1114,104 @@ mod tests {
     }
 
     #[test]
-    fn analytics_enabled_defaults_on_and_roundtrips() {
-        let directory = TestDirectory::new("analytics-enabled");
+    fn analytics_consent_defaults_unset_and_roundtrips() {
+        let directory = TestDirectory::new("analytics-consent");
         let manager = PreferencesManager::open(&directory.0).expect("open preferences");
-        assert!(manager.analytics_enabled().expect("read default"));
+        assert_eq!(
+            manager.analytics_consent().expect("read default"),
+            AnalyticsConsent::Unset
+        );
+        assert!(!manager.analytics_enabled().expect("read default"));
+        assert!(manager
+            .set_analytics_consent(AnalyticsConsent::Unset)
+            .is_err());
 
         let saved = manager
-            .set_analytics_enabled(false)
-            .expect("disable analytics");
-        assert!(!saved.analytics_enabled);
+            .set_analytics_consent(AnalyticsConsent::On)
+            .expect("agree to analytics");
+        assert_eq!(saved.analytics_consent, AnalyticsConsent::On);
+        assert!(saved.analytics_enabled);
         let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
-        assert!(!reopened.analytics_enabled().expect("read persisted value"));
+        assert!(reopened.analytics_enabled().expect("read persisted value"));
 
-        let old: AgentPreferences = serde_json::from_str(r#"{ "memoriesEnabled": false }"#)
-            .expect("deserialize old preferences");
-        assert!(old.analytics_enabled);
+        let saved = reopened
+            .set_analytics_consent(AnalyticsConsent::Off)
+            .expect("decline analytics");
+        assert_eq!(saved.analytics_consent, AnalyticsConsent::Off);
+        let file = serde_json::from_slice::<serde_json::Value>(
+            &fs::read(directory.0.join(PREFERENCES_FILE_NAME)).expect("read preferences file"),
+        )
+        .expect("parse preferences file");
+        assert_eq!(file["analyticsConsent"], "off");
+        assert_eq!(file["analyticsEnabled"], false);
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(
+            reopened.analytics_consent().expect("read persisted value"),
+            AnalyticsConsent::Off
+        );
+    }
+
+    #[test]
+    fn analytics_off_holds_in_memory_when_the_write_fails() {
+        let directory = TestDirectory::new("analytics-off-write-fails");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        manager
+            .set_analytics_consent(AnalyticsConsent::On)
+            .expect("agree to analytics");
+        assert!(manager.analytics_enabled().expect("read consent"));
+
+        // A directory at the temporary path makes the atomic write fail.
+        let temporary_path = directory
+            .0
+            .join(PREFERENCES_FILE_NAME)
+            .with_extension("json.tmp");
+        fs::create_dir_all(&temporary_path).expect("block the temporary file");
+
+        assert!(manager
+            .set_analytics_consent(AnalyticsConsent::Off)
+            .is_err());
+        assert!(!manager.analytics_enabled().expect("read consent"));
+        assert_eq!(
+            manager.analytics_consent().expect("read consent"),
+            AnalyticsConsent::Off
+        );
+    }
+
+    #[test]
+    fn old_analytics_default_migrates_to_unset_not_on() {
+        let cases = [
+            // The old default: the key is missing or true, and nobody asked.
+            (r#"{ "memoriesEnabled": false }"#, AnalyticsConsent::Unset),
+            (r#"{ "analyticsEnabled": true }"#, AnalyticsConsent::Unset),
+            // The user turned the old switch off. That is an answer.
+            (r#"{ "analyticsEnabled": false }"#, AnalyticsConsent::Off),
+            // A new file keeps its answer and ignores the derived boolean.
+            (
+                r#"{ "analyticsEnabled": false, "analyticsConsent": "on" }"#,
+                AnalyticsConsent::On,
+            ),
+            (
+                r#"{ "analyticsEnabled": true, "analyticsConsent": "unset" }"#,
+                AnalyticsConsent::Unset,
+            ),
+        ];
+        for (contents, expected) in cases {
+            let directory = TestDirectory::new("analytics-migration");
+            fs::write(directory.0.join(PREFERENCES_FILE_NAME), contents)
+                .expect("write old preferences");
+            let manager = PreferencesManager::open(&directory.0).expect("open old preferences");
+            let preferences = manager.get().expect("read preferences");
+            assert_eq!(preferences.analytics_consent, expected, "{contents}");
+            assert_eq!(
+                preferences.analytics_enabled,
+                expected == AnalyticsConsent::On,
+                "{contents}"
+            );
+            assert_eq!(
+                manager.analytics_enabled().expect("read analytics gate"),
+                expected == AnalyticsConsent::On
+            );
+        }
     }
 
     #[test]
@@ -1058,7 +1226,7 @@ mod tests {
         let directory = TestDirectory::new("app-update-auto-download");
         let manager = PreferencesManager::open(&directory.0).expect("open preferences");
         manager
-            .set_analytics_enabled(false)
+            .set_analytics_consent(AnalyticsConsent::Off)
             .expect("set analytics preference");
         let saved = manager
             .set_app_update_auto_download(false)

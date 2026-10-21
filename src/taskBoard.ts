@@ -320,3 +320,75 @@ export function receiptTokens(receipt: TaskRouteReceipt): number | null {
   if (parts.every((part) => part === null)) return null;
   return parts.reduce<number>((sum, part) => sum + (part ?? 0), 0);
 }
+
+/**
+ * The reasons of a route that ran without Halv Cloud (ADR 0021). The
+ * coordinator did the task itself, so the route is no real routing result.
+ */
+export const HALV_CLOUD_FALLBACK_REASONS: ReadonlySet<string> = new Set([
+  "halv_cloud_required",
+  "sign_in_required",
+]);
+
+/** True when the coordinator did the task itself because Halv Cloud is off. */
+export function isHalvCloudFallbackRoute(route: Pick<TaskRoute, "reasons">) {
+  return route.reasons.some((reason) => HALV_CLOUD_FALLBACK_REASONS.has(reason));
+}
+
+/**
+ * Splits the routes of a conversation. The board lists only real routes.
+ * The fallback routes only tell the board to show the Halv Cloud card.
+ */
+export function splitHalvCloudFallbackRoutes(routes: readonly TaskRoute[]) {
+  const routed: TaskRoute[] = [];
+  let fallbackCount = 0;
+  for (const route of routes) {
+    if (isHalvCloudFallbackRoute(route)) fallbackCount += 1;
+    else routed.push(route);
+  }
+  return { routed, fallbackCount };
+}
+
+/** The readable chip text of a route reason. */
+export function taskRouteReasonLabel(
+  reason: string,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+) {
+  if (reason === "halv_cloud_required") return t("Needs Halv Cloud");
+  if (reason === "sign_in_required") return t("Sign in needed");
+  return reason;
+}
+
+export const ROUTING_CLOUD_CARD_DISMISSED_STORAGE_KEY =
+  "halv.routingCloudCardDismissed";
+
+type FlagStorage = Pick<Storage, "getItem" | "setItem">;
+
+export function readRoutingCloudCardDismissed(
+  storage: FlagStorage | null = flagStorage(),
+) {
+  try {
+    return storage?.getItem(ROUTING_CLOUD_CARD_DISMISSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** "Keep going without it" on the task board card is permanent. */
+export function writeRoutingCloudCardDismissed(
+  storage: FlagStorage | null = flagStorage(),
+) {
+  try {
+    storage?.setItem(ROUTING_CLOUD_CARD_DISMISSED_STORAGE_KEY, "1");
+  } catch {
+    // The in-memory flag still hides the card for this launch.
+  }
+}
+
+function flagStorage(): FlagStorage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}

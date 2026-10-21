@@ -15,10 +15,14 @@ permissions:
 env:
   RELEASE_REPOSITORY: pedr0v/halv-releases
   RELEASE_NOTES: |
-    ## What's new
-    - The proxy restarts by itself when it falls. Restarts no longer stop after three tries, the port stays the same so open agents keep working, and each exit goes to a local log.
-    - The source code of the Halv desktop app is now open under the Apache-2.0 license: https://github.com/halv-ai/halv
+    ## Halv 1.0
+    - Halv is open source. The desktop app is under the Apache-2.0 license: https://github.com/halv-ai/halv
+    - Everything that runs on your computer is free and needs no account: the proxy and its savings, RTK, crux, terminals, projects, agent status and the local savings meter. Halv never blocks chat or terminals.
+    - Halv Cloud is the paid plan. It adds task routing to cheaper models, automatic account rotation and a synced savings dashboard. Paid, trial and lifetime accounts keep everything they had.
+    - Usage events are now opt-in. Halv asks once and lists every event it can send. Nothing is sent until you say yes, and you can change the answer in Settings.
     - Cmd-click a file path or a URL printed in a terminal to open it. Folders open in Finder, HTML files open in the browser, and Shift+Cmd-click reveals the file in Finder. Relative paths follow the current directory of the shell.
+    - The proxy restarts by itself when it falls. Restarts no longer stop after three tries, the port stays the same so open agents keep working, and each exit goes to a local log.
+    - Security updates for rustls, openssl and the build tools.
 
     ## 0.8.1
 

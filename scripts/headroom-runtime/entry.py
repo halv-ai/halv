@@ -36,6 +36,13 @@ RUNTIME_VERSION = str(BUILD_MANIFEST["runtimeVersion"])
 # base version.
 os.environ.setdefault("HEADROOM_BUILD_VERSION", RUNTIME_VERSION)
 
+# Halv sends no usage data without consent (ADR 0021). The bundled runtime
+# turns off the Headroom usage beacon and the update check. Halv also sets
+# these variables when it starts the proxy.
+os.environ.setdefault("HEADROOM_BEACON", "off")
+os.environ.setdefault("DO_NOT_TRACK", "1")
+os.environ.setdefault("HEADROOM_UPDATE_CHECK", "off")
+
 
 def _watch_parent() -> None:
     """Terminate the proxy if its supervising Halv process disappears."""
