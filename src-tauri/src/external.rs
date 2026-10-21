@@ -453,10 +453,15 @@ mod tests {
         fs::create_dir_all(root.join("Tool.app")).expect("create bundle");
         fs::create_dir_all(root.join("docs")).expect("create dir");
 
-        assert!(launchable(&root.join("run.command")));
-        assert!(launchable(&root.join("SETUP.EXE")));
+        // The extension lists differ per platform, so the test names the
+        // platform. The CI runs on Linux, macOS and Windows.
+        assert!(launchable_on(Platform::MacOs, &root.join("run.command")));
+        assert!(!launchable_on(Platform::Linux, &root.join("run.command")));
+        assert!(launchable_on(Platform::Windows, &root.join("SETUP.EXE")));
+        assert!(launchable_on(Platform::MacOs, &root.join("SETUP.EXE")));
         assert!(launchable(&root.join("tool.AppImage")));
-        assert!(launchable(&root.join("Tool.app")));
+        assert!(launchable_on(Platform::MacOs, &root.join("Tool.app")));
+        assert!(!launchable_on(Platform::Linux, &root.join("Tool.app")));
         assert!(!launchable(&root.join("page.html")));
         assert!(!launchable(&root.join("notes.txt")));
         assert!(!launchable(&root.join("docs")));
