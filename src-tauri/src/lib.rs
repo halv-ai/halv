@@ -41,6 +41,7 @@ mod supervisor_link;
 pub mod task_hierarchy;
 mod task_routing;
 mod terminal;
+mod terminal_links;
 mod terminal_state;
 #[cfg(desktop)]
 mod tray;
@@ -217,6 +218,8 @@ pub fn run() {
             checkpoints::agent_session_checkpoint_preview,
             checkpoints::agent_session_checkpoint_restore,
             external::app_open_external_url,
+            external::app_open_path,
+            external::app_reveal_path,
             dot_webview::dot_set_view,
             dot_webview::dot_reload,
             auth::auth_request_code,
@@ -368,6 +371,7 @@ pub fn run() {
             terminal::terminal_open_shell,
             terminal::terminal_continue_shell,
             terminal::terminal_foreground_busy,
+            terminal_links::terminal_link_targets,
             resource_usage::diagnostics_resource_usage,
             main_window::app_hide_main_window,
             remote::remote_status,

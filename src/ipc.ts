@@ -147,6 +147,9 @@ export type AgentGhosttyLaunchArgs = {
 };
 
 export type OpenExternalUrlArgs = { url: string };
+// The path must be absolute and must exist. The backend reveals a launchable
+// file in the file manager and never runs it.
+export type AppPathArgs = { path: string };
 export type ApiKeyArgs = { apiKey: string };
 export type OAuthLoginArgs = { provider: string };
 export type RequestCodeArgs = { email: string; challengeToken?: string | null };
@@ -570,6 +573,16 @@ export type TerminalWriteArgs = TerminalAttachArgs & {
   sequence?: number;
 };
 export type TerminalForegroundBusyArgs = { sessionIds: string[] };
+// Each candidate is the path text of one link, without ":line:col". The
+// backend reads at most 64 candidates of at most 1024 characters each.
+export type TerminalLinkTargetsArgs = { sessionId: string; candidates: string[] };
+// One result for each candidate, in the same order. `path` is the resolved
+// absolute path when `kind` is not "none".
+export type TerminalLinkTarget = {
+  text: string;
+  path: string | null;
+  kind: "file" | "dir" | "none";
+};
 export type TerminalOpenShellArgs = TerminalAttachArgs & {
   scope: string | null;
   cols: number;
@@ -650,6 +663,8 @@ export interface IpcContract {
   analytics_install_id: { args: undefined; result: string };
   analytics_record: { args: AnalyticsRecordArgs; result: void };
   app_open_external_url: { args: OpenExternalUrlArgs; result: void };
+  app_open_path: { args: AppPathArgs; result: void };
+  app_reveal_path: { args: AppPathArgs; result: void };
   app_hide_main_window: { args: undefined; result: void };
   dot_set_view: { args: { visible: boolean; x: number; y: number; width: number; height: number }; result: void };
   dot_reload: { args: undefined; result: void };
@@ -854,6 +869,7 @@ export interface IpcContract {
   terminal_open_shell: { args: TerminalOpenShellArgs; result: TerminalSession };
   terminal_continue_shell: { args: TerminalAttachArgs; result: TerminalSession };
   terminal_foreground_busy: { args: TerminalForegroundBusyArgs; result: TerminalForegroundBusy[] };
+  terminal_link_targets: { args: TerminalLinkTargetsArgs; result: TerminalLinkTarget[] };
   diagnostics_resource_usage: { args: undefined; result: ResourceUsageSnapshot };
   workspace_bind_conversation: { args: WorkspaceBindArgs; result: WorkspaceStatus };
   workspace_create_branch: { args: WorkspaceCreateBranchArgs; result: WorkspaceStatus };
@@ -967,6 +983,8 @@ export const commandNames = [
   "analytics_install_id",
   "analytics_record",
   "app_open_external_url",
+  "app_open_path",
+  "app_reveal_path",
   "app_hide_main_window",
   "dot_set_view",
   "dot_reload",
@@ -1167,6 +1185,7 @@ export const commandNames = [
   "terminal_open_shell",
   "terminal_continue_shell",
   "terminal_foreground_busy",
+  "terminal_link_targets",
   "diagnostics_resource_usage",
   "workspace_bind_conversation",
   "workspace_create_branch",

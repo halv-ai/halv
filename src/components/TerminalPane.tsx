@@ -10,7 +10,13 @@ import { terminalSizeRegistry } from "../terminalSizeOwner";
 import { createTerminalInputStream } from "../terminalInput";
 import { createTerminalPasteFilter, sanitizeTerminalPaste } from "../terminalPaste";
 import { ipc } from "../ipc.ts";
-import { terminalLinkHandler } from "../externalLinks.ts";
+import { activateTerminalWebLink, terminalLinkHandler } from "../externalLinks.ts";
+import {
+  createTerminalPathLinkProvider,
+  openTerminalPathTarget,
+  type ResolvedTerminalLinkTarget,
+} from "../terminalLinkProvider.ts";
+import { isMacPlatform } from "../shortcuts.ts";
 import {
   type DragEvent,
   useEffect,
@@ -19,6 +25,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Terminal } from "@xterm/xterm";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { agentSessionStore, type AgentSessionStatus } from "../agentSessions";
 import { refreshLanesWhenSplitMenuOpens } from "../terminalSplit";
@@ -47,7 +54,7 @@ import {
   shortcutMatchesEvent,
   type KeyboardShortcutOverrides,
 } from "../shortcuts";
-import { useT } from "../i18n/runtime";
+import { useT, type Translate } from "../i18n/runtime";
 import { useExclusiveDetailsMenu } from "./detailsMenu";
 import { AgentStateGlyph } from "./AgentStateGlyph";
 import { AccountRestartChip } from "./AccountRestartChip";
@@ -151,6 +158,104 @@ type TerminalWithRenderDimensions = Terminal & {
 
 const MAX_TERMINAL_FIT_FOLLOW_UPS = 3;
 
+// The hint under the path in the link tooltip. It tells the click gestures.
+function terminalLinkHint(
+  t: Translate,
+  kind: ResolvedTerminalLinkTarget["kind"],
+  mac: boolean,
+) {
+  if (mac) {
+    return kind === "dir"
+      ? t("⌘-click to open in Finder · ⇧⌘-click to reveal in Finder")
+      : t("⌘-click to open · ⇧⌘-click to reveal in Finder");
+  }
+  return kind === "dir"
+    ? t("Ctrl-click to open folder · Shift+Ctrl-click to show in folder")
+    : t("Ctrl-click to open · Shift+Ctrl-click to show in folder");
+}
+
+// Distance in pixels between the mouse and the link tooltip.
+const LINK_TOOLTIP_OFFSET = 14;
+
+// Adds the link support to a terminal after terminal.open():
+// - file paths in the output become links when they exist on disk,
+// - http and https URLs in the output become links,
+// - a tooltip shows the resolved path and the click gestures.
+// OSC 8 hyperlinks use the linkHandler option and do not change here.
+function attachTerminalLinks(
+  terminal: Terminal,
+  host: HTMLElement,
+  sessionId: string,
+  tRef: { readonly current: Translate },
+): { dispose(): void } {
+  const stage = host.parentElement ?? host;
+  const tooltip = document.createElement("div");
+  tooltip.className = "terminal-link-tooltip";
+  tooltip.hidden = true;
+  tooltip.setAttribute("role", "tooltip");
+  const pathText = document.createElement("span");
+  pathText.className = "terminal-link-tooltip-path";
+  const hintText = document.createElement("span");
+  hintText.className = "terminal-link-tooltip-hint";
+  tooltip.append(pathText, hintText);
+  stage.append(tooltip);
+
+  const hideTooltip = () => {
+    tooltip.hidden = true;
+  };
+  const showTooltip = (target: ResolvedTerminalLinkTarget, event: MouseEvent) => {
+    pathText.textContent = target.path;
+    hintText.textContent = terminalLinkHint(tRef.current, target.kind, isMacPlatform());
+    tooltip.hidden = false;
+    // Put the tooltip below and to the right of the mouse. Keep it inside the
+    // stage, and put it above the mouse when the space below is too small.
+    const bounds = stage.getBoundingClientRect();
+    const width = tooltip.offsetWidth;
+    const height = tooltip.offsetHeight;
+    const mouseX = event.clientX - bounds.left;
+    const mouseY = event.clientY - bounds.top;
+    const left = Math.max(0, Math.min(mouseX + LINK_TOOLTIP_OFFSET, bounds.width - width));
+    const below = mouseY + LINK_TOOLTIP_OFFSET;
+    const top =
+      below + height <= bounds.height
+        ? below
+        : Math.max(0, mouseY - LINK_TOOLTIP_OFFSET - height);
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  };
+
+  // The addon finds http and https URLs in the text. The handler uses the
+  // same click rule and the same open path as OSC 8 hyperlinks. The addon
+  // loads before the path provider. When two links overlap, xterm keeps the
+  // link of the provider that registered first, so a URL wins over a path in
+  // its query.
+  const webLinks = new WebLinksAddon((event, uri) => {
+    activateTerminalWebLink(event, uri);
+  });
+  terminal.loadAddon(webLinks);
+
+  const pathLinks = terminal.registerLinkProvider(
+    createTerminalPathLinkProvider({
+      sessionId,
+      buffer: () => terminal.buffer.active,
+      onHover: showTooltip,
+      onLeave: hideTooltip,
+      open: (target, gesture) => {
+        hideTooltip();
+        openTerminalPathTarget(target, gesture);
+      },
+    }),
+  );
+
+  return {
+    dispose() {
+      pathLinks.dispose();
+      webLinks.dispose();
+      tooltip.remove();
+    },
+  };
+}
+
 export function TerminalPane({
   active,
   closing,
@@ -189,6 +294,10 @@ export function TerminalPane({
   visible = true,
 }: TerminalPaneProps) {
   const t = useT();
+  // The terminal effect runs once for each session. The ref gives it the
+  // translator of the current locale.
+  const tRef = useRef(t);
+  tRef.current = t;
   const activitySnapshot = useSyncExternalStore(
     terminalActivityStore.subscribe,
     terminalActivityStore.getSnapshot,
@@ -379,6 +488,7 @@ export function TerminalPane({
       return compositionGuard?.accept(event) ?? true;
     });
     terminal.open(host);
+    const linkDisposables = attachTerminalLinks(terminal, host, session.id, tRef);
     compositionGuard = createTerminalCompositionGuard(
       terminal.textarea!,
       (data) => terminal.input(data, true),
@@ -843,6 +953,7 @@ export function TerminalPane({
       dataDisposable.dispose();
       pasteFilter.dispose();
       compositionGuard?.dispose();
+      linkDisposables.dispose();
       terminal.dispose();
       if (terminalRef.current === terminal) terminalRef.current = null;
     };

@@ -1253,6 +1253,8 @@ export class FixtureTransport implements Transport {
         return "audit-turnstile-token";
       case "auth_oauth_cancel":
       case "app_open_external_url":
+      case "app_open_path":
+      case "app_reveal_path":
       case "dot_set_view":
       case "dot_reload":
         return null;
@@ -3111,6 +3113,13 @@ export class FixtureTransport implements Transport {
           totalBytes: terminals.reduce((sum, terminal) => sum + terminal.bytes, appBytes),
         };
       }
+      case "terminal_link_targets":
+        // The harness has no file system, so no candidate resolves.
+        return ((args.candidates as string[] | undefined) ?? []).map((text) => ({
+          text,
+          path: null,
+          kind: "none",
+        }));
       case "terminal_foreground_busy": {
         // Tests set `__harnessShellBusy[sessionId]` to "busy" or "unknown".
         // A running shell is idle by default.
@@ -4281,6 +4290,8 @@ export const fixtureCommandHandlers: Record<
   analytics_install_id: routeFixtureCommand("analytics_install_id"),
   analytics_record: routeFixtureCommand("analytics_record"),
   app_open_external_url: routeFixtureCommand("app_open_external_url"),
+  app_open_path: routeFixtureCommand("app_open_path"),
+  app_reveal_path: routeFixtureCommand("app_reveal_path"),
   app_hide_main_window: routeFixtureCommand("app_hide_main_window"),
   dot_set_view: routeFixtureCommand("dot_set_view"),
   dot_reload: routeFixtureCommand("dot_reload"),
@@ -4485,6 +4496,7 @@ export const fixtureCommandHandlers: Record<
   terminal_open_shell: routeFixtureCommand("terminal_open_shell"),
   terminal_continue_shell: routeFixtureCommand("terminal_continue_shell"),
   terminal_foreground_busy: routeFixtureCommand("terminal_foreground_busy"),
+  terminal_link_targets: routeFixtureCommand("terminal_link_targets"),
   diagnostics_resource_usage: routeFixtureCommand("diagnostics_resource_usage"),
   workspace_bind_conversation: routeFixtureCommand("workspace_bind_conversation"),
   workspace_create_branch: routeFixtureCommand("workspace_create_branch"),

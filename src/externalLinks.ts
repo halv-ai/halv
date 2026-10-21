@@ -80,12 +80,24 @@ export function createTerminalLinkHandler(platform?: string): ILinkHandler {
   return {
     allowNonHttpProtocols: false,
     activate(event, uri) {
-      if (!isTerminalLinkClick(event, platform)) {
-        return;
-      }
-      openUntrustedLink(uri);
+      activateTerminalWebLink(event, uri, platform);
     },
   };
+}
+
+// Opens a URL that the terminal shows as text. The OSC 8 handler above and
+// the web links addon both use this function, so the two have the same
+// rule: the click must pass isTerminalLinkClick, and only http and https
+// links open in the system browser.
+export function activateTerminalWebLink(
+  event: TerminalLinkClick,
+  uri: string,
+  platform?: string,
+): void {
+  if (!isTerminalLinkClick(event, platform)) {
+    return;
+  }
+  openUntrustedLink(uri);
 }
 
 export const terminalLinkHandler: ILinkHandler = createTerminalLinkHandler();

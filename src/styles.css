@@ -2265,6 +2265,40 @@ a.bg-accent:hover {
   background: rgb(var(--surface-raised));
 }
 
+/* The tooltip of a file path link in the terminal. TerminalPane sets left
+   and top from the mouse position. */
+.terminal-link-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  max-width: min(32rem, calc(100% - 1rem));
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgb(var(--surface-border) / 0.45);
+  border-radius: 0.45rem;
+  background: rgb(var(--surface-panel));
+  box-shadow: 0 12px 30px rgb(var(--shadow-color) / 0.3);
+  pointer-events: none;
+}
+
+.terminal-link-tooltip[hidden] {
+  display: none;
+}
+
+.terminal-link-tooltip-path {
+  color: rgb(var(--content-primary));
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.58rem;
+  overflow-wrap: anywhere;
+}
+
+.terminal-link-tooltip-hint {
+  color: rgb(var(--content-muted));
+  font-size: 0.54rem;
+  white-space: nowrap;
+}
+
 .terminal-access-label {
   position: absolute;
   right: 1.05rem;
