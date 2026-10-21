@@ -18,6 +18,7 @@ env:
     ## What's new
     - The proxy restarts by itself when it falls. Restarts no longer stop after three tries, the port stays the same so open agents keep working, and each exit goes to a local log.
     - The source code of the Halv desktop app is now open under the Apache-2.0 license: https://github.com/halv-ai/halv
+    - Cmd-click a file path or a URL printed in a terminal to open it. Folders open in Finder, HTML files open in the browser, and Shift+Cmd-click reveals the file in Finder. Relative paths follow the current directory of the shell.
 
     ## 0.8.1
 
