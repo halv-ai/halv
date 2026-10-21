@@ -6758,14 +6758,22 @@ mod tests {
             insert_test_terminal(manager, session_record(id, status), "")
         }
 
+        /// Opens a `cat` session with the PTY echo off and waits until it is
+        /// ready. The scrollback then holds only the output of `cat`, in the
+        /// order that the lines reached the PTY. With the echo on, the kernel
+        /// can put `cat` output inside the echo of a later line, so the order
+        /// in the scrollback does not show the write order.
         fn open_cat_session(supervisor: &InProcessSupervisor, id: &str) {
             supervisor
                 .connect(TEST_APP_VERSION)
                 .expect("the in-process supervisor should connect")
                 .open(OpenRequest {
                     id: id.to_string(),
-                    program: "/bin/cat".to_string(),
-                    args: Vec::new(),
+                    program: "/bin/sh".to_string(),
+                    args: vec![
+                        "-c".to_string(),
+                        "stty -echo && echo cat-ready && exec cat".to_string(),
+                    ],
                     cwd: "/tmp".to_string(),
                     env: Vec::new(),
                     env_remove: Vec::new(),
@@ -6774,10 +6782,20 @@ mod tests {
                     meta: serde_json::Value::Null,
                 })
                 .expect("the cat session should open");
+            let deadline = Instant::now() + TEST_TIMEOUT;
+            loop {
+                let (snapshot, _events) = supervisor
+                    .attach(TEST_APP_VERSION, id)
+                    .expect("the cat session should attach");
+                if snapshot.scrollback.contains("cat-ready") {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "the cat session did not start");
+                thread::sleep(Duration::from_millis(20));
+            }
         }
 
-        /// The input lines in the order that the PTY first showed them. The
-        /// PTY echoes each line before `cat` prints it again.
+        /// The input lines in the order that `cat` printed them.
         fn first_seen_lines(scrollback: &str) -> Vec<String> {
             let mut seen: Vec<String> = Vec::new();
             for token in scrollback.split(|character: char| !character.is_ascii_alphanumeric()) {
