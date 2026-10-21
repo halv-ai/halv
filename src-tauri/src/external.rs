@@ -475,7 +475,8 @@ mod tests {
             assert!(launchable(&script));
 
             // A harmless name does not hide a launchable symlink target.
-            let target = root.join("payload.command");
+            // ".sh" is in the shared list, so the check holds on every platform.
+            let target = root.join("payload.sh");
             fs::write(&target, "x").expect("write file");
             let link = root.join("readme.html");
             symlink(&target, &link).expect("symlink");
