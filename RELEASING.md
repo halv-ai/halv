@@ -267,36 +267,99 @@ quit it first, so that it registers the scheme.
 
 ### Analytics v2 (ADR 0022)
 
-Check that Halv sends the data in the "What is sent" list and no other data.
-Do these checks on the release installer. Use a machine that has no Halv dev build.
+Check that Halv sends the data in the "What is sent" list and no other
+data. Do these checks on the release installer. Use a machine that has no
+Halv dev build.
+
+Test A runs across a UTC midnight. Do Tests B, C, and D on a second
+machine, or after Test A.
 
 #### Prepare traffic capture
 
-1. Start a traffic recorder, for example `mitmproxy`. Or use the server log of `api.halv.ai`.
-2. Send the traffic of Halv through the recorder.
-3. Delete the app data directory of Halv.
+Halv trusts only its own list of root certificates. A proxy certificate in
+the system store has no effect, so `mitmproxy` cannot read the traffic of
+Halv. The server log holds only the method and the path of a request. Use a
+reverse proxy on loopback instead:
+
+1. Quit Halv. Delete the app data directory.
+2. Start the recorder:
+   `mitmdump --mode reverse:https://api.halv.ai -p 8787 -w capture.flows`
+3. Start Halv from a terminal with `HALV_API_URL=http://127.0.0.1:8787`.
+   A release build reads this variable and accepts HTTP on loopback. On
+   Windows, run `set HALV_API_URL=http://127.0.0.1:8787` in `cmd` first.
+   Start Halv this way each time in this section, and before you sign in.
+   A saved session keeps its own server URL, and Halv then skips the
+   recorder.
+4. Read the capture with `mitmdump -nr capture.flows --flow-detail 4`. Look
+   only at the requests to `/v1/analytics/`. The recorder also sees the
+   other requests to the account service.
+
+The `journey_events` table on the server gives a second view of the same
+data. Its `props` column holds the version 2 fields, `locale`, and
+`consent_version` of each event.
 
 #### Test A: list and traffic
 
-1. Start Halv. Answer "Yes" to the usage events question.
-2. Use Halv for one day. Use at least one agent session.
-3. Compare the traffic with the "What is sent" list in Settings, Privacy. Make sure each event, field and value in the traffic is in the list.
-4. Make sure Halv sends analytics only to `api.halv.ai`. Make sure Halv sends nothing to PostHog.
-5. Make sure `tokens_saved` and `usd_saved` have at most 2 significant digits.
-6. Make sure the sum of the `usd_saved` values matches the local savings meter. A rounding difference of 5 percent for each value is normal.
+The savings meter counts local days. The summary counts UTC days. Set the
+time zone of the machine to UTC, so that both use the same day.
+
+1. Start Halv as in step 3 of the capture preparation. Answer "Yes" to the
+   usage events question.
+2. Use Halv on this UTC day. Call it day D. Use at least one agent session,
+   so that the savings meter shows a value for day D.
+3. Compare the traffic with the "What is sent" list in Settings, Privacy.
+   Make sure each event, field, and value in the traffic is in the list.
+4. Keep the recorder running past UTC midnight. Then restart Halv, or wait
+   up to 6 h. Halv can summarize day D only after day D ends.
+5. Make sure the traffic has `usage_summarized` with `day` D. Make sure
+   `tokens_saved` and `usd_saved` have at most 2 significant digits.
+6. Compare `usd_saved` with the savings meter for day D only. Use the daily
+   chart in the savings panel. Do not use the all-time value, because it
+   also counts later days. A rounding difference of 5 percent is normal.
+7. Make sure Halv sends analytics only to `api.halv.ai`. Use a network
+   monitor that lists host names, for example Little Snitch. Make sure no
+   connection goes to a PostHog host.
 
 #### Test B: version 1 install
 
-1. Install the previous release. Answer "Yes" to the usage events question. Quit Halv.
-2. Start the release candidate over the previous release. Do not answer the notice.
-3. Use Halv. Make sure the traffic has no version 2 event: `usage_summarized`, `crash_detected`, `proxy_failed`, `app_updated`, `update_failed`.
-4. Make sure the traffic has no `locale`, no `consent_version` 2, no `agent_kind`, no `auth_method` and no `surface`.
-5. Answer "No" to the notice. Make sure the traffic stays the same as in steps 3 and 4.
+1. Quit Halv. Delete the app data directory. Do this before you install
+   the previous release.
+2. Install the previous release. Answer "Yes" to the usage events question.
+   Quit Halv.
+3. Start the release candidate over the previous release. Do not answer
+   the notice.
+4. Use Halv. Make sure the traffic has no version 2 event:
+   `usage_summarized`, `crash_detected`, `proxy_failed`, `app_updated`,
+   `update_failed`.
+5. Make sure the traffic has no `locale`, no `consent_version` 2, no
+   `agent_kind`, no `auth_method`, and no `surface`.
+6. Answer "No" to the notice. Make sure the traffic stays the same as in
+   steps 4 and 5.
 
-#### Test C: notice shows once
+#### Test C: notice shows until you answer
 
-1. Repeat Test B steps 1 and 2.
-2. Make sure the banner "Halv now also sends a daily usage summary" shows. Make sure it does not block work.
-3. Quit Halv without an answer. Start Halv. Make sure the banner shows again.
-4. Answer "Yes". Quit Halv. Start Halv. Make sure the banner does not show again.
-5. Make sure the traffic now has `consent_version` 2 and `locale`.
+1. Repeat steps 1 to 3 of Test B.
+2. Make sure the banner "Halv now also sends a daily usage summary" shows.
+   Make sure it does not block work. The banner does not show on the
+   welcome screen, in the first-run card, or in the prepared first task.
+   Finish these first.
+3. Quit Halv without an answer. Start Halv. Make sure the banner shows
+   again.
+4. Answer "Yes". Quit Halv. Start Halv. Make sure the banner does not show
+   again.
+5. Trigger an event that this install did not send yet. A batch goes out
+   only when Halv has a new event. Look at the capture for the events that
+   Halv already sent. The Halv Cloud pitch card waits for the banner. If it
+   did not show before, it shows right after "Yes", and Halv sends
+   `trial_prompted` with `surface` `pitch`. Or keep the capture running to
+   the next UTC day, and look at the `active_day` batch.
+6. Make sure the new batch has `consent_version` 2 and `locale`.
+
+#### Test D: no consent, no traffic
+
+1. Quit Halv. Delete the app data directory.
+2. Start Halv. Do not answer the usage events question.
+3. Connect an agent account. Run one task. Quit Halv. Start Halv.
+4. Make sure the capture has no request to `/v1/analytics/`.
+5. In Settings, Privacy, set usage events to off. Do step 3 again. Make
+   sure the capture still has no request to `/v1/analytics/`.
