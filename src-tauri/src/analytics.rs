@@ -21,6 +21,9 @@ const ATTRIBUTION_FILE_NAME: &str = "attribution.json";
 /// The app tells the webview about a new download id with this event.
 pub const ATTRIBUTION_EVENT: &str = "halv://attribution";
 const FIRST_OPEN: &str = "first_open";
+/// A dev build on Windows or Linux registers the halv:// scheme only when the
+/// developer sets this variable to `1`.
+const REGISTER_LINK_ENV: &str = "HALV_REGISTER_LINK";
 const DOWNLOAD_LINK_SCHEME: &str = "halv";
 const DOWNLOAD_LINK_HOST: &str = "welcome";
 const DOWNLOAD_ID_PARAMETER: &str = "d";
@@ -739,7 +742,7 @@ pub fn listen_for_download_links(app: &AppHandle) {
     if needs_runtime_scheme_registration(
         std::env::consts::OS,
         runs_as_appimage(app),
-        cfg!(debug_assertions),
+        dev_build_registers_scheme(),
     ) {
         if let Err(error) = deep_link.register_all() {
             log_failure(&format!(
@@ -755,15 +758,27 @@ pub fn listen_for_download_links(app: &AppHandle) {
 }
 
 /// Tells if Halv must register the halv:// scheme when it starts. The MSI,
-/// NSIS, deb and rpm installers register it from `tauri.conf.json`. An
-/// AppImage and a dev build have no installer. macOS registers the scheme
-/// from the app bundle and cannot register it at runtime.
-fn needs_runtime_scheme_registration(os: &str, appimage: bool, debug_build: bool) -> bool {
+/// deb and rpm installers register it from `tauri.conf.json`. An AppImage has
+/// no installer, so it registers the scheme itself. A dev build registers the
+/// scheme only when the developer asks for it, because the registration takes
+/// the link from an installed release app. macOS registers the scheme from
+/// the app bundle and cannot register it at runtime.
+fn needs_runtime_scheme_registration(os: &str, appimage: bool, dev_registration: bool) -> bool {
     match os {
-        "linux" => appimage || debug_build,
-        "windows" => debug_build,
+        "linux" => appimage || dev_registration,
+        "windows" => dev_registration,
         _ => false,
     }
+}
+
+/// Tells if the developer asked a dev build to register the halv:// scheme
+/// with `HALV_REGISTER_LINK=1`. A release build always answers no.
+fn dev_build_registers_scheme() -> bool {
+    cfg!(debug_assertions) && register_link_requested(std::env::var(REGISTER_LINK_ENV).ok())
+}
+
+fn register_link_requested(value: Option<String>) -> bool {
+    value.as_deref() == Some("1")
 }
 
 #[cfg(target_os = "linux")]
@@ -1156,6 +1171,41 @@ mod tests {
         assert!(!needs_runtime_scheme_registration("windows", false, false));
         assert!(!needs_runtime_scheme_registration("macos", false, true));
         assert!(!needs_runtime_scheme_registration("macos", false, false));
+    }
+
+    /// The bundler writes the Exec line of the deb, rpm and AppImage launcher
+    /// from this template. Without %u the launcher starts Halv without the
+    /// halv:// link (tauri-apps/tauri#15928).
+    #[test]
+    fn linux_launcher_template_passes_the_link_to_halv() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        for package in ["deb", "rpm"] {
+            assert_eq!(
+                config["bundle"]["linux"][package]["desktopTemplate"], "linux/halv.desktop",
+                "{package}"
+            );
+        }
+        assert_eq!(
+            config["plugins"]["deep-link"]["desktop"]["schemes"],
+            serde_json::json!([DOWNLOAD_LINK_SCHEME])
+        );
+        let template = include_str!("../linux/halv.desktop");
+        assert!(template.lines().any(|line| line == "Exec={{exec}} %u"));
+        assert!(template
+            .lines()
+            .any(|line| line == "MimeType={{mime_type}}"));
+    }
+
+    #[test]
+    fn a_dev_build_registers_the_link_scheme_only_when_asked() {
+        assert!(register_link_requested(Some("1".to_string())));
+        for value in [None, Some(""), Some("0"), Some("true"), Some(" 1")] {
+            assert!(
+                !register_link_requested(value.map(str::to_string)),
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

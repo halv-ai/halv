@@ -96,6 +96,12 @@
     "linux": {
       "appimage": {
         "bundleMediaFramework": false
+      },
+      "deb": {
+        "desktopTemplate": "linux/halv.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/halv.desktop"
       }
     }
   }

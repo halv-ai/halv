@@ -1,0 +1,20 @@
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} %u
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name={{name}}
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}
+{{!--
+  This file replaces the default Tauri template for the deb, rpm and AppImage
+  bundles. The default Exec line has no %u field code. Without %u, the launcher
+  starts Halv without the halv:// link (tauri-apps/tauri#15928), and Halv loses
+  the download id. Keep every other line equal to the default template.
+--}}

@@ -200,24 +200,67 @@ Do these manual checks on the release installers before you publish them.
 The site opens `halv://welcome?d=<download_id>` after a download starts
 (ADR 0021). Test the link on macOS, Windows (in the VM), and Linux.
 
-1. Install Halv from the release installer. On Linux, test the AppImage and
-   one of the DEB or RPM packages. An AppImage registers the scheme only
-   when it starts, so for the AppImage do step 5 only.
-2. Before the first open, open the link:
-   - macOS: `open "halv://welcome?d=test_123"`
-   - Windows: `start "" "halv://welcome?d=test_123"`
-   - Linux: `xdg-open "halv://welcome?d=test_123"`
-3. Make sure that Halv starts and that Settings > Privacy shows `test_123`.
-4. Set usage events to on. Make sure that the `first_open` event sends
-   `download_id` with the value `test_123`.
-5. Do the test again on a clean install, with Halv already open:
-   1. Open Halv. Do not set usage events to on yet.
-   2. Close the main window, so that Halv runs only in the tray.
-   3. Open the link.
-   4. Make sure that Settings > Privacy shows `test_123`. On Windows and
-      Linux, also make sure that the main window comes back and that no
-      second Halv process starts.
-   5. Set usage events to on. Make sure that `first_open` sends
-      `download_id` with the value `test_123`.
-6. Open `halv://welcome?d=bad.id`. Make sure that Halv ignores it and shows
-   no error.
+Halv has no screen that shows the download id. Use these two checks:
+
+- The file `attribution.json` in the app data directory holds the id that
+  Halv accepted. Halv deletes this file after the server accepts `first_open`.
+- The `download_id` column of the newest `first_open` row in the
+  `journey_events` table on the server holds the id that Halv sent.
+
+The app data directory is:
+
+- macOS: `~/Library/Application Support/ai.halv.app`
+- Windows: `%APPDATA%\ai.halv.app`
+- Linux: `~/.local/share/ai.halv.app`
+
+To open a link, use the command for the system:
+
+- macOS: `open "<link>"`
+- Windows: `start "" "<link>"`
+- Linux: `xdg-open "<link>"`
+
+#### Prepare the machine
+
+1. Use a machine where no Halv dev build ran. A dev build on Windows or Linux
+   registers `halv://` only when `HALV_REGISTER_LINK=1` is set. An older dev
+   build always registered it, and its entry wins over the installed release app.
+   To remove such an entry:
+   - Windows: delete the registry key `HKCU\Software\Classes\halv`.
+   - Linux: delete `~/.local/share/applications/halv-handler.desktop`. Delete
+     the `x-scheme-handler/halv` line in `~/.config/mimeapps.list`.
+2. Install Halv from the release installer. On Linux, test the AppImage and
+   one of the DEB or RPM packages.
+3. On Linux DEB and RPM, run
+   `grep -E '^(Exec|MimeType)=' /usr/share/applications/Halv.desktop`.
+   Make sure that `Exec` ends with `%u` and that `MimeType` has
+   `x-scheme-handler/halv`. Without `%u`, the launcher starts Halv without
+   the link.
+
+#### Test A: link before the first open
+
+Do this test on macOS, Windows, and the Linux DEB and RPM packages. An
+AppImage registers the scheme only when it starts, so skip this test for it.
+
+1. Quit Halv. Delete the app data directory.
+2. Open `halv://welcome?d=bad.id`. Make sure that Halv shows no error and
+   that `attribution.json` does not exist. Quit Halv.
+3. Open `halv://welcome?d=test_123`. Make sure that Halv starts and that
+   `attribution.json` holds `test_123`.
+4. Set usage events to on. Make sure that the newest `first_open` row on the
+   server has `download_id` with the value `test_123`.
+
+#### Test B: link while Halv runs
+
+Do this test on all systems. For the Linux AppImage, start the file once and
+quit it first, so that it registers the scheme.
+
+1. Quit Halv. Delete the app data directory. Start Halv. Do not set usage
+   events to on.
+2. Close the main window, so that Halv runs only in the tray.
+3. Open `halv://welcome?d=bad.id`. Make sure that Halv shows no error and
+   that `attribution.json` does not exist.
+4. Open `halv://welcome?d=test_123`. Make sure that `attribution.json` holds
+   `test_123`. On Windows and Linux, also make sure that the main window comes
+   back and that no second Halv process starts.
+5. Set usage events to on. Make sure that the newest `first_open` row on the
+   server has `download_id` with the value `test_123`.
