@@ -93,6 +93,7 @@ import {
   analyticsEventProps,
   analyticsEventsWithConsent,
   analyticsSignIns,
+  analyticsSignInsKnown,
   flushAnalytics,
   recordAnalyticsEvent,
   recordTrialPrompted,
@@ -945,6 +946,8 @@ function App() {
     "account" | "paywall" | null
   >(null);
   const analyticsPreviousStateRef = useRef<AnalyticsState | null>(null);
+  // Latches when the agent lanes and the credential status have both answered.
+  const analyticsSignInsKnownRef = useRef(false);
   const [gateNowMs, setGateNowMs] = useState(() => Date.now());
   const [connectGateState, setConnectGateState] =
     useState<ConnectGateState>("resolving");
@@ -10043,16 +10046,32 @@ function App() {
   );
   useEffect(
     function recordFunnelEventsForStateChange() {
+      // The lanes and the credential status load apart. Until both have
+      // answered, no account counts as connected. `account_connected` thus
+      // carries the facts of the full set of sign-ins, not of the first half.
+      if (
+        analyticsSignInsKnown({
+          accountsResolved: connectGateAccountsResolved,
+          auth: status.auth,
+          statusError: status.error,
+        })
+      ) {
+        analyticsSignInsKnownRef.current = true;
+      }
+      const signInsKnown = analyticsSignInsKnownRef.current;
       const nextState: AnalyticsState = {
         // ChatGPT OAuth and pasted API keys count as a connected account too.
         accountConnected:
-          Object.values(composerConnections).some(Boolean) ||
-          hasProviderCredentials(status.auth, status.anthropic),
-        signIns: analyticsSignIns({
-          connections: composerConnections,
-          auth: status.auth,
-          anthropic: status.anthropic,
-        }),
+          signInsKnown &&
+          (Object.values(composerConnections).some(Boolean) ||
+            hasProviderCredentials(status.auth, status.anthropic)),
+        signIns: signInsKnown
+          ? analyticsSignIns({
+              connections: composerConnections,
+              auth: status.auth,
+              anthropic: status.anthropic,
+            })
+          : [],
         tokensSaved: todaySavings?.tokensSaved ?? 0,
         trialConfirmed: status.account?.entitlements?.trialConfirmed === true,
         paymentConfirmed: status.account?.entitlements?.paymentConfirmed === true,
@@ -10078,11 +10097,13 @@ function App() {
     [
       anonymousUsagePreference.consent,
       composerConnections,
+      connectGateAccountsResolved,
       status.account?.entitlements?.trialConfirmed,
       status.account?.entitlements?.paymentConfirmed,
       status.account?.signedIn,
       status.anthropic,
       status.auth,
+      status.error,
       todaySavings?.tokensSaved,
     ],
   );

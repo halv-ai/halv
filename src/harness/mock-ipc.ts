@@ -1435,7 +1435,20 @@ export class FixtureTransport implements Transport {
       case "analytics_attribution_get":
         return { downloadId: this.downloadId };
       case "analytics_record":
-      case "analytics_set_locale":
+      case "analytics_set_locale": {
+        // Tests read the calls. Nothing leaves the harness.
+        const global = window as typeof window & {
+          __harnessAnalyticsCalls?: Array<{
+            command: string;
+            args: Record<string, unknown>;
+          }>;
+        };
+        (global.__harnessAnalyticsCalls ??= []).push({
+          command,
+          args: { ...args },
+        });
+        return null;
+      }
       case "analytics_flush":
         return null;
 

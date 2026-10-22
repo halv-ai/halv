@@ -189,6 +189,7 @@ function consentEventGroups(t: Translate): ConsentGroup[] {
           id: "usage_summarized",
           label: t("One summary for each day you used Halv, sent after the day ends"),
           fields: [
+            t("The day it covers"),
             t("The agents you used"),
             t("The number of agent sessions, as a range"),
             t("Tokens and dollars saved, rounded to 2 significant digits"),
@@ -252,6 +253,7 @@ export function ConsentDetails({
     t("The time of the event"),
     t("The download ID, if you came through a link on the Halv site"),
     t("The app language"),
+    t("The list version you agreed to"),
   ];
   const neverSent = [
     t("Your prompts"),
@@ -537,7 +539,7 @@ export function ConsentCardView({
           </h2>
           <p className="mt-1 leading-5 text-content-secondary">
             {t(
-              "Halv sends anonymous usage events only if you say yes, so we can fix the steps where people get stuck.",
+              "Halv sends anonymous usage events only if you say yes. They help us fix the steps where people get stuck, find crashes, and count what Halv saves.",
             )}
           </p>
         </div>
@@ -564,7 +566,7 @@ export function ConsentCardView({
       {description ? (
         <p className="leading-5" id={descriptionId}>
           {t(
-            "Anonymous usage events help Halv fix the steps where people get stuck.",
+            "Anonymous usage events help Halv fix the steps where people get stuck, find crashes, and count what it saves.",
           )}
         </p>
       ) : null}
@@ -643,12 +645,70 @@ export function ConsentNoticeBanner() {
   return <ConsentCardView {...useConsentControls()} variant="notice" />;
 }
 
+export type ConsentRecordViewProps = {
+  /** The list version that "on" covers. `null` without "on". */
+  version: AnalyticsConsentVersion | null;
+  /** The stored download ID. `undefined` while it loads, `null` without one. */
+  downloadId: string | null | undefined;
+  pending: boolean;
+  /** Moves a version 1 answer to version 2. */
+  onShareSummary: () => void;
+};
+
 /**
  * The saved consent facts for Settings, Privacy: the list version that the
- * answer covers, and the stored download ID of the site link.
+ * answer covers, and the stored download ID of the site link. A version 1
+ * answer also gets the button that moves it to version 2, because the
+ * notice of version 2 does not come back after an answer.
  */
-export function ConsentRecord() {
+export function ConsentRecordView({
+  version,
+  downloadId,
+  pending,
+  onShareSummary,
+}: ConsentRecordViewProps) {
   const t = useT();
+  return (
+    <>
+      <p>
+        {t("List version you agreed to")}:{" "}
+        <code className="font-mono text-content-secondary">
+          {version === null ? t("None yet") : String(version)}
+        </code>
+      </p>
+      {version === 1 ? (
+        <>
+          <p>
+            {t(
+              "Version 1 sends only the 13 events of the first list, without the new details.",
+            )}
+          </p>
+          <div>
+            <button
+              className="consent-choice"
+              disabled={pending}
+              onClick={onShareSummary}
+              type="button"
+            >
+              {t("Share the summary too")}
+            </button>
+          </div>
+        </>
+      ) : null}
+      <p>
+        {t("Download ID")}:{" "}
+        <code className="break-all font-mono text-content-secondary">
+          {downloadId === undefined
+            ? "…"
+            : (downloadId ?? t("No download ID"))}
+        </code>
+      </p>
+    </>
+  );
+}
+
+/** `ConsentRecordView` with the saved answer and the stored download ID. */
+export function ConsentRecord() {
   const preference = useAnonymousUsagePreference();
   const [downloadId, setDownloadId] = useState<string | null | undefined>(
     undefined,
@@ -666,29 +726,13 @@ export function ConsentRecord() {
       disposed = true;
     };
   }, []);
-  const version = preference.version ?? null;
   return (
-    <>
-      <p>
-        {t("List version you agreed to")}:{" "}
-        <code className="font-mono text-content-secondary">
-          {version === null ? t("None") : String(version)}
-        </code>
-      </p>
-      {version === 1 ? (
-        <p>
-          {t(
-            "Version 1 sends only the 13 events of the first list, without the new details.",
-          )}
-        </p>
-      ) : null}
-      <p>
-        {t("Download ID")}:{" "}
-        <code className="break-all font-mono text-content-secondary">
-          {downloadId === undefined ? "…" : (downloadId ?? t("None"))}
-        </code>
-      </p>
-    </>
+    <ConsentRecordView
+      downloadId={downloadId}
+      onShareSummary={() => void answerConsentNotice(2)}
+      pending={preference.pending}
+      version={preference.version ?? null}
+    />
   );
 }
 

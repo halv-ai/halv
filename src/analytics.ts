@@ -133,6 +133,24 @@ export function analyticsSignIns({
 }
 
 /**
+ * `true` when both sources of sign-ins have answered once: the agent lanes
+ * and the credential status. The status answers with an auth value, or with
+ * an error when the read fails. Until then, the sign-ins are a partial set,
+ * and a fact built from them can differ from the full set.
+ */
+export function analyticsSignInsKnown({
+  accountsResolved,
+  auth,
+  statusError,
+}: {
+  accountsResolved: boolean;
+  auth: AuthStatus | null;
+  statusError: string | null;
+}): boolean {
+  return accountsResolved && (auth !== null || statusError !== null);
+}
+
+/**
  * The facts of `account_connected`. A fact goes out only when all sign-ins
  * agree on it. With two different agents, the app cannot tell which one the
  * user connected, so it sends no `agent_kind`.

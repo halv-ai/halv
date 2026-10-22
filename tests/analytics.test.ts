@@ -256,3 +256,18 @@ test("the v2 events are the five native events of the contract", async () => {
     assert.ok(!(ANALYTICS_EVENTS as readonly string[]).includes(event), `${event} is not a webview event`);
   }
 });
+
+test("the sign-ins are known only after the lanes and the status both answered", async () => {
+  const { analyticsSignInsKnown } = await import("../src/analytics.ts");
+  const known = (accountsResolved: boolean, auth: unknown, statusError: string | null) =>
+    analyticsSignInsKnown({ accountsResolved, auth: auth as never, statusError });
+  // Nothing answered yet.
+  assert.equal(known(false, null, null), false);
+  // The lanes answered, the status did not: the set is partial.
+  assert.equal(known(true, null, null), false);
+  // The status answered, the lanes did not.
+  assert.equal(known(false, { signedOut: {} }, null), false);
+  // Both answered. A failed status read counts, so a failure cannot block the events.
+  assert.equal(known(true, { signedOut: {} }, null), true);
+  assert.equal(known(true, null, "status failed"), true);
+});

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
@@ -54,6 +55,7 @@ const SENT_WITH_EVENTS = [
   "The time of the event",
   "The download ID, if you came through a link on the Halv site",
   "The app language",
+  "The list version you agreed to",
 ];
 
 // List version 2 shows the 13 journey events and the 5 new events (ADR 0022).
@@ -244,6 +246,7 @@ test("each version 2 event and fact has plain words", () => {
     "The agent and how you signed in (app, API key, or CLI)",
     "Where it showed",
     // usage_summarized
+    "The day it covers",
     "The agents you used",
     "The number of agent sessions, as a range",
     "Tokens and dollars saved, rounded to 2 significant digits",
@@ -342,4 +345,115 @@ test("the notice answers keep yes and save the list version", async () => {
 test("the connected notice renders nothing without a version 1 yes", () => {
   // The answers above left "off" in the shared store.
   assert.equal(render(React.createElement(consent.ConsentNoticeBanner)), "");
+});
+
+function record(
+  props: Partial<{
+    version: 1 | 2 | null;
+    downloadId: string | null | undefined;
+    pending: boolean;
+  }> = {},
+) {
+  return render(
+    React.createElement(consent.ConsentRecordView, {
+      version: 1,
+      downloadId: "site_abc-1",
+      pending: false,
+      onShareSummary: () => undefined,
+      ...props,
+    }),
+  );
+}
+
+test("the record of a version 1 answer shows the note and the button for version 2", () => {
+  const html = record({ version: 1 });
+  assert.ok(html.includes("List version you agreed to"));
+  assert.ok(html.includes(">1</code>"));
+  assert.ok(html.includes("Version 1 sends only the 13 events of the first list"));
+  assert.ok(html.includes(">Share the summary too</button>"));
+  assert.ok(!html.includes("disabled"));
+  assert.ok(html.includes(">site_abc-1</code>"));
+  // The button waits while an answer is in flight.
+  assert.ok(record({ version: 1, pending: true }).includes("disabled"));
+});
+
+test("the record of a version 2 answer has no note and no button", () => {
+  const html = record({ version: 2 });
+  assert.ok(html.includes(">2</code>"));
+  assert.ok(!html.includes("Version 1 sends only"));
+  assert.ok(!html.includes("<button"));
+});
+
+test("the record says so when there is no list version and no download ID", () => {
+  const html = record({ version: null, downloadId: null });
+  assert.ok(html.includes(">None yet</code>"));
+  assert.ok(html.includes(">No download ID</code>"));
+  assert.ok(!html.includes("<button"));
+  // The download ID shows an ellipsis while it loads.
+  assert.ok(record({ downloadId: undefined }).includes(">…</code>"));
+});
+
+test("the connected record shows the list version that the saved answer covers", async () => {
+  consentIpc.setIpcTransport({
+    invoke: async (name: string) =>
+      ({
+        analyticsConsent: "on",
+        analyticsConsentVersion: 1,
+        analyticsConsentAsked: 2,
+      }) as never,
+    listen: async () => () => undefined,
+  });
+  try {
+    await consent.answerConsentNotice(1);
+    const html = render(React.createElement(consent.ConsentRecord));
+    assert.ok(html.includes("Version 1 sends only the 13 events"));
+    assert.ok(html.includes(">Share the summary too</button>"));
+  } finally {
+    consentIpc.setIpcTransport(consentIpc.tauriTransport);
+  }
+});
+
+test("the record button asks for list version 2 through the notice answer", () => {
+  const source = readFileSync(
+    new URL("../src/components/AnonymousUsagePreference.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /onShareSummary=\{\(\) => void answerConsentNotice\(2\)\}/);
+  assert.match(source, /onClick=\{onShareSummary\}/);
+});
+
+// The catalogs keep "None" in English for the Extensions panel. The record
+// must not reuse it, or each language shows a bare English word.
+test("the record words are translated in each catalog", () => {
+  const source = readFileSync(
+    new URL("../src/components/AnonymousUsagePreference.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(!source.includes('t("None")'), "the record does not reuse the bare None");
+  const keys = [
+    "None yet",
+    "No download ID",
+    "The day it covers",
+    "The list version you agreed to",
+  ];
+  for (const locale of [
+    "de", "es", "fr", "it", "ja", "ko", "nl", "pt-BR", "zh-CN", "zh-TW",
+  ]) {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL(`../src/i18n/catalogs/${locale}.json`, import.meta.url),
+        "utf8",
+      ),
+    ) as Record<string, string>;
+    for (const key of keys) {
+      assert.ok(catalog[key], `${locale} has ${key}`);
+      assert.notEqual(catalog[key], key, `${locale} translates ${key}`);
+    }
+  }
+});
+
+test("the ask card names the purposes of list version 2", () => {
+  const html = view("ask", "unset");
+  assert.ok(html.includes("find crashes"));
+  assert.ok(html.includes("count what Halv saves"));
 });
