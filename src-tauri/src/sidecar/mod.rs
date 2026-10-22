@@ -1120,6 +1120,16 @@ impl SidecarManager {
         }
     }
 
+    /// Reports a failed start. `status` is the result of a start that a
+    /// caller asked for: the app launch, a manual restart, the setup, or a
+    /// start on demand. An isolated manager has no reporter, so it stays
+    /// silent. The automatic restart does not use this: it reports the exit.
+    fn report_start_outcome(&self, status: &SidecarStatus) {
+        if matches!(status, SidecarStatus::Error { .. }) && !self.is_terminated() {
+            self.report_failure(crate::analytics::PROXY_START, false);
+        }
+    }
+
     pub async fn refresh_status(&self) -> SidecarStatus {
         let Ok(_guard) = self.inner.op_lock.try_lock() else {
             return self.current_status();
@@ -1130,7 +1140,9 @@ impl SidecarManager {
 
     pub async fn ensure_ready(&self) -> SidecarStatus {
         let _guard = self.inner.op_lock.lock().await;
-        self.ensure_ready_locked().await
+        let status = self.ensure_ready_locked().await;
+        self.report_start_outcome(&status);
+        status
     }
 
     /// Always false: the Headroom proxy never pauses for the plan of the
@@ -1143,10 +1155,8 @@ impl SidecarManager {
     /// bundle is version-coupled to the app and is never replaced by uv/pipx.
     pub async fn startup(&self) {
         self.reap_orphaned_headroom_proxies();
-        let status = self.ensure_ready().await;
-        if matches!(status, SidecarStatus::Error { .. }) && !self.is_terminated() {
-            self.report_failure(crate::analytics::PROXY_START, false);
-        }
+        // `ensure_ready` reports a failed start.
+        self.ensure_ready().await;
         self.spawn_supervisor();
     }
 
@@ -1265,6 +1275,9 @@ impl SidecarManager {
         if self.is_terminated() {
             return Ok(self.set_terminated_status(port));
         }
+        // The setup cancelled the automatic restart before it brought the
+        // proxy back.
+        self.report_exit_outcome(false);
 
         self.set_resource_dir(resource_dir.clone());
         self.set_status(SidecarStatus::Installing { port });
@@ -1296,6 +1309,7 @@ impl SidecarManager {
         self.set_binary_path(None);
         self.clear_cached_version();
         let status = self.ensure_ready_locked().await;
+        self.report_start_outcome(&status);
         if matches!(&status, SidecarStatus::Running { .. }) {
             self.reset_auto_heal_after_manual_success();
         }
@@ -1533,7 +1547,9 @@ impl SidecarManager {
         self.cancel_auto_heal_task();
         let _guard = self.inner.op_lock.lock().await;
         self.cancel_auto_heal_task();
-        self.restart_locked().await
+        let status = self.restart_locked().await;
+        self.report_start_outcome(&status);
+        status
     }
 
     async fn restart_locked(&self) -> SidecarStatus {
@@ -1541,6 +1557,9 @@ impl SidecarManager {
         if self.is_terminated() {
             return self.set_terminated_status(port);
         }
+        // The manual restart cancelled the automatic one before it brought
+        // the proxy back. Without this, a later restart reports the old exit.
+        self.report_exit_outcome(false);
 
         self.kill_child();
         self.clear_cached_version();
@@ -4115,6 +4134,10 @@ mod tests {
         fs::set_permissions(path, permissions).expect("script should be executable");
     }
 
+    /// A test that picks free ports holds this lock. Two such tests at once
+    /// can take the same port from each other.
+    static PORT_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+
     fn env_lock() -> &'static StdMutex<()> {
         static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| StdMutex::new(()))
@@ -4304,6 +4327,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_restart_waits_for_the_saved_port_and_keeps_it() {
+        let _ports = PORT_LOCK.lock().await;
         let manager = SidecarManager::new(0);
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind a port");
         let saved = listener.local_addr().expect("local addr").port();
@@ -5397,6 +5421,182 @@ exit 23
             vec![(crate::analytics::PROXY_EXIT.to_string(), false)]
         );
         manager.shutdown();
+    }
+
+    type FailureReports = Arc<StdMutex<Vec<(String, bool)>>>;
+
+    /// Sets a reporter that stores each proxy failure.
+    fn record_failures(manager: &SidecarManager) -> FailureReports {
+        let reports = FailureReports::default();
+        let sink = reports.clone();
+        manager.set_failure_reporter(Arc::new(move |category: &str, recovered: bool| {
+            sink.lock()
+                .expect("reports lock should not be poisoned")
+                .push((category.to_string(), recovered));
+        }));
+        reports
+    }
+
+    fn reported(reports: &FailureReports) -> Vec<(String, bool)> {
+        reports
+            .lock()
+            .expect("reports lock should not be poisoned")
+            .clone()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_start_is_reported_by_each_caller_that_asked_for_it() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("failed-start-report");
+        let resources = root.join("resources");
+        write_executable(
+            &resources
+                .join("headroom-runtime")
+                .join(bundled_binary_name()),
+            "#!/bin/sh\nexit 1\n",
+        );
+        let manager = SidecarManager::new(0);
+        manager.set_resource_dir(resources);
+        let reports = record_failures(&manager);
+        let start = (crate::analytics::PROXY_START.to_string(), false);
+
+        // A start on demand, as the chat does, and the app launch.
+        let status = manager.ensure_ready().await;
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+        assert_eq!(reported(&reports), vec![start.clone()]);
+
+        // A manual restart.
+        let status = manager.restart().await;
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+        assert_eq!(reported(&reports), vec![start.clone(), start.clone()]);
+
+        // The automatic restart reports the exit, not a start.
+        let status = manager.ensure_ready_locked().await;
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+        assert_eq!(reported(&reports).len(), 2);
+
+        // An app that quits is not a failed start.
+        manager.inner.terminated.store(true, Ordering::SeqCst);
+        manager.ensure_ready().await;
+        manager.restart().await;
+        assert_eq!(reported(&reports).len(), 2);
+        cleanup_dir(&root);
+    }
+
+    struct SilentProgress;
+
+    impl InstallProgressSink for SilentProgress {
+        fn emit(&self, _stage: SidecarInstallStage, _line: impl Into<String>) {}
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_setup_reports_a_failed_start_and_settles_a_pending_exit() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("setup-failed-start-report");
+        let resources = root.join("resources");
+        write_executable(
+            &resources
+                .join("headroom-runtime")
+                .join(bundled_binary_name()),
+            "#!/bin/sh\nexit 1\n",
+        );
+        let manager = SidecarManager::new(0);
+        let reports = record_failures(&manager);
+        manager
+            .inner
+            .exit_report_pending
+            .store(true, Ordering::SeqCst);
+
+        let status = manager
+            .install_headroom(resources, &SilentProgress)
+            .await
+            .expect("the bundled runtime exists");
+
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+        assert_eq!(
+            reported(&reports),
+            vec![
+                (crate::analytics::PROXY_EXIT.to_string(), false),
+                (crate::analytics::PROXY_START.to_string(), false),
+            ]
+        );
+        cleanup_dir(&root);
+    }
+
+    #[tokio::test]
+    async fn a_start_without_a_failure_reports_nothing() {
+        let manager = SidecarManager::new(0);
+        let reports = record_failures(&manager);
+        manager.report_start_outcome(&SidecarStatus::NotInstalled {
+            install_hint: install_hint(),
+            port: 0,
+        });
+        manager.report_start_outcome(&SidecarStatus::Starting { port: 0 });
+        assert!(reported(&reports).is_empty());
+        // A manager without a reporter, as the isolated proxy has, is silent.
+        let isolated = SidecarManager::new(0);
+        isolated.report_start_outcome(&SidecarStatus::Error {
+            message: "failed".to_string(),
+            port: 0,
+        });
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_manual_restart_settles_the_exit_whose_automatic_restart_it_cancelled() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("manual-restart-exit-report");
+        let app_data_dir = root.join("app-data");
+        let managed_binary = app_data_dir.join("bin").join(binary_name());
+        // The fixture is not executable, so each start fails.
+        write_file(&managed_binary, "managed binary fixture");
+        let manager = SidecarManager::new(0);
+        manager.set_app_data_dir(app_data_dir);
+        manager.set_binary_path(Some(managed_binary));
+        let reports = record_failures(&manager);
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 3"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("short-lived managed child should spawn");
+        child.wait().expect("child should exit");
+        manager.replace_child(Some(ManagedChild {
+            process: child,
+            stderr_drain: None,
+            stderr_done: None,
+        }));
+
+        // The automatic restart waits for the lock, so it cannot report.
+        let op_guard = manager.inner.op_lock.lock().await;
+        let status = manager.refresh_status_locked().await;
+        assert!(matches!(status, SidecarStatus::Starting { .. }));
+        assert!(manager.inner.exit_report_pending.load(Ordering::SeqCst));
+        assert!(reported(&reports).is_empty());
+
+        // The user restarts the proxy. The restart cancels the automatic one.
+        let restarting = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.restart().await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(op_guard);
+        let status = restarting.await.expect("restart task should finish");
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+
+        let exit = (crate::analytics::PROXY_EXIT.to_string(), false);
+        let start = (crate::analytics::PROXY_START.to_string(), false);
+        assert!(!manager.inner.exit_report_pending.load(Ordering::SeqCst));
+        assert_eq!(reported(&reports), vec![exit.clone(), start.clone()]);
+
+        // A later restart does not report the old exit again.
+        manager.restart().await;
+        assert_eq!(reported(&reports), vec![exit, start.clone(), start]);
+        manager.shutdown();
+        cleanup_dir(&root);
     }
 
     #[cfg(unix)]

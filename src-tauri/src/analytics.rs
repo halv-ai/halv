@@ -5,7 +5,7 @@ use crate::{
     savings::UtcDayUsage,
     storage::{AuthSession, Storage},
 };
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -108,7 +108,9 @@ const RSS_BUCKETS: [&str; 6] = [
 const AUTH_METHODS: [&str; 3] = ["oauth", "api_key", "cli"];
 const SURFACES: [&str; 4] = ["pitch", "routing", "rotation", "task_board"];
 const TASK_CATEGORIES: [&str; 4] = ["connection", "engine", "task", "cancelled"];
-/// The `proxy_failed` categories. The sidecar uses these names.
+/// The `proxy_failed` categories. The sidecar uses these names. The proxy
+/// has no restart budget (it restarts without limit), so no code records
+/// `restart_exhausted` yet. The server and the app accept it.
 pub(crate) const PROXY_START: &str = "start";
 pub(crate) const PROXY_EXIT: &str = "exit";
 const PROXY_CATEGORIES: [&str; 3] = [PROXY_START, PROXY_EXIT, "restart_exhausted"];
@@ -329,14 +331,70 @@ fn serialize_amount<S: Serializer>(value: &Option<f64>, serializer: S) -> Result
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 struct AnalyticsQueue {
+    #[serde(deserialize_with = "read_pending")]
     pending: Vec<AnalyticsEvent>,
     recorded: BTreeSet<String>,
     /// The v2 events (ADR 0022). They have their own list, so an older
     /// release that reads this file ignores them and still starts.
+    #[serde(deserialize_with = "read_pending_v2")]
     pending_v2: Vec<AnalyticsEvent>,
     /// The keys of the recorded v2 events, with the time of each event.
     /// The queue drops a key after 40 days.
+    #[serde(deserialize_with = "read_recorded_v2")]
     recorded_v2: BTreeMap<String, u64>,
+}
+
+/// The fields of a v1 event: the part that a damaged v2 fact never removes.
+const V1_FIELDS: [&str; 5] = ["event", "at", "category", "app_version", "download_id"];
+
+/// Reads the v1 list. A v2 fact with a wrong type, for example
+/// `"agent_kind": 5`, is dropped from its event. A wrong v1 field keeps
+/// failing: the start stops, as before ADR 0022.
+fn read_pending<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<AnalyticsEvent>, D::Error> {
+    Vec::<serde_json::Value>::deserialize(deserializer)?
+        .into_iter()
+        .map(|value| {
+            AnalyticsEvent::deserialize(&value).or_else(|_| {
+                let v1_part = match value {
+                    serde_json::Value::Object(mut fields) => {
+                        fields.retain(|name, _| V1_FIELDS.contains(&name.as_str()));
+                        serde_json::Value::Object(fields)
+                    }
+                    other => other,
+                };
+                AnalyticsEvent::deserialize(v1_part).map_err(D::Error::custom)
+            })
+        })
+        .collect()
+}
+
+/// Reads the v2 list. The app drops an entry that it cannot read, so a
+/// damaged v2 part never stops the start.
+fn read_pending_v2<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<AnalyticsEvent>, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .filter_map(|value| AnalyticsEvent::deserialize(value).ok())
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+/// Reads the v2 keys. The app drops an entry without a whole-number time.
+fn read_recorded_v2<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, u64>, D::Error> {
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Object(entries) => entries
+            .into_iter()
+            .filter_map(|(key, at)| Some((key, at.as_u64()?)))
+            .collect(),
+        _ => BTreeMap::new(),
+    })
 }
 
 impl AnalyticsQueue {
@@ -1629,12 +1687,28 @@ fn record_native(app: &AppHandle, event: AnalyticsEvent) -> bool {
     ) else {
         return false;
     };
+    record_with_consent(
+        &manager,
+        &preferences,
+        &app.package_info().version.to_string(),
+        event,
+    )
+}
+
+/// `record_native` on the managers. Returns true when the queue can have a
+/// new event to send.
+fn record_with_consent(
+    manager: &AnalyticsManager,
+    preferences: &PreferencesManager,
+    app_version: &str,
+    event: AnalyticsEvent,
+) -> bool {
     let event = AnalyticsEvent {
-        app_version: Some(app.package_info().version.to_string()),
+        app_version: Some(app_version.to_string()),
         ..event
     };
-    current_sharing(&preferences)
-        .and_then(|sharing| record_if_shared(&manager, sharing, event))
+    current_sharing(preferences)
+        .and_then(|sharing| record_if_shared(manager, sharing, event))
         .unwrap_or_else(|error| {
             log_failure(&error);
             false
@@ -1686,40 +1760,65 @@ fn update_failed_event(category: &str, now: u64) -> AnalyticsEvent {
 /// 3. A version 2 consent without a stored day starts the summaries today.
 /// 4. The usage summaries run now and every 6 hours.
 pub(crate) fn on_app_start(app: &AppHandle) {
-    let Some(manager) = app.try_state::<AnalyticsManager>() else {
+    let (Some(manager), Some(preferences)) = (
+        app.try_state::<AnalyticsManager>(),
+        app.try_state::<PreferencesManager>(),
+    ) else {
         return;
     };
     let Ok(now) = unix_time_seconds() else {
         return;
     };
-    let current_version = app.package_info().version.to_string();
+    let boot_history = app
+        .try_state::<BootRecordManager>()
+        .map(|boot_record| boot_record.history(2))
+        .unwrap_or_default();
+    let recorded = record_start_events(
+        &manager,
+        &preferences,
+        &app.package_info().version.to_string(),
+        &boot_history,
+        now,
+    );
+    if recorded {
+        spawn_flush(app);
+    }
+    spawn_usage_summaries(app.clone());
+}
+
+/// Steps 1 to 3 of `on_app_start` on the managers. `boot_history` is the
+/// boot record, newest run first. Returns true when it recorded an event.
+fn record_start_events(
+    manager: &AnalyticsManager,
+    preferences: &PreferencesManager,
+    app_version: &str,
+    boot_history: &[BootRecordEntry],
+    now: u64,
+) -> bool {
     let mut recorded = false;
-    match manager.replace_last_app_version(&current_version) {
+    match manager.replace_last_app_version(app_version) {
         Ok(Some(from_version)) => {
-            recorded |= record_native(app, app_updated_event(&from_version, now));
+            recorded |= record_with_consent(
+                manager,
+                preferences,
+                app_version,
+                app_updated_event(&from_version, now),
+            );
         }
         Ok(None) => {}
         Err(error) => log_failure(&error),
     }
-    if let Some(boot_record) = app.try_state::<BootRecordManager>() {
-        if let Some(event) = crash_event(&boot_record.history(2), now) {
-            recorded |= record_native(app, event);
-        }
+    if let Some(event) = crash_event(boot_history, now) {
+        recorded |= record_with_consent(manager, preferences, app_version, event);
     }
-    let sharing = app
-        .try_state::<PreferencesManager>()
-        .and_then(|preferences| current_sharing(&preferences).ok());
-    if sharing == Some(Sharing::V2) {
+    if current_sharing(preferences).ok() == Some(Sharing::V2) {
         if let Err(error) = manager.update_state(|state| {
             state.consent_v2_day.get_or_insert(now / DAY_SECONDS);
         }) {
             log_failure(&error);
         }
     }
-    if recorded {
-        spawn_flush(app);
-    }
-    spawn_usage_summaries(app.clone());
+    recorded
 }
 
 fn app_updated_event(from_version: &str, now: u64) -> AnalyticsEvent {
@@ -1804,40 +1903,58 @@ fn summarize_usage(app: &AppHandle) -> bool {
     ) else {
         return false;
     };
-    let result = (|| -> Result<bool, String> {
-        if current_sharing(&preferences)? != Sharing::V2 {
-            return Ok(false);
-        }
-        let Some(consent_day) = manager.state()?.consent_v2_day else {
-            return Ok(false);
-        };
-        let now = unix_time_seconds()?;
-        let session = storage
-            .get_auth_session()
-            .map_err(|error| error.to_string())?;
-        let plan = summary_plan(session.as_ref(), now);
-        let events = usage_events(
-            now,
-            consent_day,
-            plan,
-            |day| manager.has_v2_key(&usage_key(day)),
-            |day| {
-                storage
-                    .utc_day_usage(&utc_day_start(day), &utc_day_start(day + 1))
-                    .map_err(|error| error.to_string())
-            },
-        )?;
-        // Each event gets its own record, so this loop never stops early.
-        let mut recorded = false;
-        for event in events {
-            recorded |= record_native(app, event);
-        }
-        Ok(recorded)
-    })();
-    result.unwrap_or_else(|error| {
-        log_failure(&error);
-        false
-    })
+    unix_time_seconds()
+        .and_then(|now| {
+            record_usage_summaries(
+                &manager,
+                &preferences,
+                &storage,
+                &app.package_info().version.to_string(),
+                now,
+            )
+        })
+        .unwrap_or_else(|error| {
+            log_failure(&error);
+            false
+        })
+}
+
+/// `summarize_usage` on the managers, at the time `now`. Returns true when
+/// it recorded an event.
+fn record_usage_summaries(
+    manager: &AnalyticsManager,
+    preferences: &PreferencesManager,
+    storage: &Storage,
+    app_version: &str,
+    now: u64,
+) -> Result<bool, String> {
+    if current_sharing(preferences)? != Sharing::V2 {
+        return Ok(false);
+    }
+    let Some(consent_day) = manager.state()?.consent_v2_day else {
+        return Ok(false);
+    };
+    let session = storage
+        .get_auth_session()
+        .map_err(|error| error.to_string())?;
+    let plan = summary_plan(session.as_ref(), now);
+    let events = usage_events(
+        now,
+        consent_day,
+        plan,
+        |day| manager.has_v2_key(&usage_key(day)),
+        |day| {
+            storage
+                .utc_day_usage(&utc_day_start(day), &utc_day_start(day + 1))
+                .map_err(|error| error.to_string())
+        },
+    )?;
+    // Each event gets its own record, so this loop never stops early.
+    let mut recorded = false;
+    for event in events {
+        recorded |= record_with_consent(manager, preferences, app_version, event);
+    }
+    Ok(recorded)
 }
 
 /// The usage summaries to record now. `summarized` tells if a day has a
@@ -3236,6 +3353,299 @@ mod tests {
         assert_eq!(queue.pending_v2.len(), 1);
         assert_eq!(queue.pending_v2[0].event, UPDATE_FAILED);
         assert_eq!(queue.recorded_v2.len(), 1);
+    }
+
+    #[test]
+    fn a_wrong_type_in_the_v2_part_of_the_queue_never_stops_the_start() {
+        let directory = TestDirectory::new("v2-type-errors");
+        let now = unix_time_seconds().unwrap();
+        let day = now / DAY_SECONDS;
+        let file = serde_json::json!({
+            "pending": [
+                {"event": "account_connected", "at": now, "agent_kind": 5, "tokens_saved": -5},
+                {"event": "trial_prompted", "at": now, "surface": "pitch"}
+            ],
+            "recorded": ["account_connected", "trial_prompted"],
+            "pending_v2": [
+                {"event": "update_failed", "at": now, "category": "install", "tokens_saved": -5},
+                {"event": "update_failed", "at": now, "category": "install", "usd_saved": "1.5"},
+                {"event": "proxy_failed", "at": now, "category": "exit", "recovered": true},
+                "text",
+                5
+            ],
+            "recorded_v2": {
+                "update_failed:20000": "x",
+                (format!("update_failed:{day}")): -3,
+                "crash_detected:20001": 1.5,
+                (format!("proxy_failed:{day}")): now
+            }
+        });
+        fs::write(directory.0.join(QUEUE_FILE_NAME), file.to_string()).unwrap();
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        let queue = manager.queue.lock().unwrap().clone();
+        // The v1 events stay. The wrong v2 fact leaves its event.
+        assert_eq!(
+            queue.pending,
+            vec![
+                AnalyticsEvent::new("account_connected", now),
+                AnalyticsEvent {
+                    surface: Some("pitch".into()),
+                    ..AnalyticsEvent::new("trial_prompted", now)
+                }
+            ]
+        );
+        assert_eq!(queue.pending_v2.len(), 1);
+        assert_eq!(queue.pending_v2[0].event, PROXY_FAILED);
+        assert_eq!(
+            queue.recorded_v2.keys().cloned().collect::<Vec<_>>(),
+            vec![format!("proxy_failed:{day}")]
+        );
+
+        // A part that is not the right shape gives an empty v2 part.
+        let file = serde_json::json!({
+            "pending": [{"event": "installed", "at": now}],
+            "recorded": ["installed"],
+            "pending_v2": {"event": "proxy_failed"},
+            "recorded_v2": ["proxy_failed:1"]
+        });
+        fs::write(directory.0.join(QUEUE_FILE_NAME), file.to_string()).unwrap();
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        let queue = manager.queue.lock().unwrap().clone();
+        assert_eq!(queue.pending, vec![AnalyticsEvent::new("installed", now)]);
+        assert!(queue.pending_v2.is_empty());
+        assert!(queue.recorded_v2.is_empty());
+    }
+
+    #[test]
+    fn a_wrong_type_in_the_v1_part_of_the_queue_still_fails_the_open() {
+        let directory = TestDirectory::new("v1-type-errors");
+        let now = unix_time_seconds().unwrap();
+        for pending in [
+            serde_json::json!([{"event": "installed", "at": "x"}]),
+            serde_json::json!([{"event": "installed", "at": now, "category": 5}]),
+            serde_json::json!({"event": "installed"}),
+        ] {
+            let file = serde_json::json!({"pending": pending, "recorded": ["installed"]});
+            fs::write(directory.0.join(QUEUE_FILE_NAME), file.to_string()).unwrap();
+            let error = AnalyticsManager::open(&directory.0).expect_err("v1 part stays strict");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{pending}");
+        }
+    }
+
+    /// A local database with one turn of an agent session per row:
+    /// `(session, agent kind, UTC day, tokens saved, dollars saved)`. A
+    /// session starts on the day of its first row.
+    fn usage_storage(turns: &[(&str, &str, u64, i64, f64)]) -> Storage {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        crate::storage::run_migrations(&connection).unwrap();
+        for (index, (session, kind, day, tokens_saved, dollars)) in turns.iter().enumerate() {
+            let time = utc_day_start(*day).replace("T00:00:00Z", "T12:00:00Z");
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO agent_sessions
+                        (id, agent_kind, lane, mode, cwd, status, created_at,
+                         last_active_at)
+                     VALUES (?1, ?2, ?2, 'terminal_embedded', '/tmp', 'completed',
+                             ?3, ?3)",
+                    rusqlite::params![session, kind, time],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO agent_session_turns
+                        (session_id, turn_index, input_tokens, output_tokens,
+                         cache_read_tokens, cache_creation_tokens, cost_usd,
+                         savings_tokens, savings_usd, pricing_source,
+                         crux_tokens_saved, savings_source, has_message_snapshot,
+                         created_at, occurred_local_date, usd_method)
+                     VALUES (?1, ?2, 20, 10, 3, 0, NULL, ?3, ?4, 'model_table', 0,
+                             'measured', 0, ?5, ?6, 'input_once')",
+                    rusqlite::params![session, index, tokens_saved, dollars, time, &time[..10]],
+                )
+                .unwrap();
+        }
+        Storage::from_test_connection(connection, "2026-08-20T00:00:00Z")
+    }
+
+    fn consenting_managers(
+        name: &str,
+        consent_version: u8,
+    ) -> (TestDirectory, AnalyticsManager, PreferencesManager) {
+        let directory = TestDirectory::new(name);
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        let preferences = PreferencesManager::open(&directory.0).unwrap();
+        preferences
+            .set_analytics_consent(AnalyticsConsent::On, Some(consent_version))
+            .unwrap();
+        (directory, manager, preferences)
+    }
+
+    #[test]
+    fn the_usage_summaries_follow_the_consent_and_match_the_local_meter() {
+        let today = today();
+        let storage = usage_storage(&[
+            ("a", "codex", today - 3, 12_345, 0.4567),
+            ("a", "codex", today - 2, 3_000, 0.25),
+            ("b", "zai", today - 2, 99_999, 1.25),
+            ("c", "claude", today - 1, 1_234_567, 23.45),
+        ]);
+
+        // No consent and version 1 record nothing.
+        let directory = TestDirectory::new("usage-no-consent");
+        let manager = AnalyticsManager::open(&directory.0).unwrap();
+        let preferences = PreferencesManager::open(&directory.0).unwrap();
+        assert!(!record_usage_summaries(&manager, &preferences, &storage, "1.1.0", NOW).unwrap());
+        let (_v1_directory, v1_manager, v1_preferences) = consenting_managers("usage-v1", 1);
+        assert!(
+            !record_usage_summaries(&v1_manager, &v1_preferences, &storage, "1.1.0", NOW).unwrap()
+        );
+        assert!(manager.pending().unwrap().is_empty());
+        assert!(v1_manager.pending().unwrap().is_empty());
+
+        // Version 2 without a stored day records nothing: the day is not set.
+        let (_directory, manager, preferences) = consenting_managers("usage-v2", 2);
+        assert!(!record_usage_summaries(&manager, &preferences, &storage, "1.1.0", NOW).unwrap());
+        // Version 2 from 3 days ago covers the 3 closed days since.
+        manager
+            .apply_sharing(Sharing::Nothing, Sharing::V2, NOW - 3 * DAY_SECONDS)
+            .unwrap();
+        assert!(record_usage_summaries(&manager, &preferences, &storage, "1.1.0", NOW).unwrap());
+        let events = manager.pending().unwrap();
+        assert_eq!(events.len(), 3);
+        let body = |event: &AnalyticsEvent| serde_json::to_value(event).unwrap();
+        assert_eq!(
+            body(&events[0]),
+            serde_json::json!({
+                "event": "usage_summarized", "at": NOW, "app_version": "1.1.0",
+                "day": today - 3, "agents_used": ["codex"], "sessions_bucket": "1",
+                "tokens_saved": 12_000, "usd_saved": 0.46, "crux_used": false,
+                "routing_used": false, "plan": "none"
+            })
+        );
+        assert_eq!(
+            body(&events[1]),
+            serde_json::json!({
+                "event": "usage_summarized", "at": NOW, "app_version": "1.1.0",
+                "day": today - 2, "agents_used": ["codex", "glm"],
+                "sessions_bucket": "2-5", "tokens_saved": 100_000, "usd_saved": 1.5,
+                "crux_used": false, "routing_used": false, "plan": "none"
+            })
+        );
+        assert_eq!(
+            body(&events[2]),
+            serde_json::json!({
+                "event": "usage_summarized", "at": NOW, "app_version": "1.1.0",
+                "day": today - 1, "agents_used": ["claude_code"],
+                "sessions_bucket": "1", "tokens_saved": 1_200_000, "usd_saved": 23,
+                "crux_used": false, "routing_used": false, "plan": "none"
+            })
+        );
+
+        // The summed dollars and tokens match the local meter, within the
+        // rounding of 2 significant digits (at most 5 % of each day).
+        let meter = storage.total_savings().unwrap();
+        let usd: f64 = events.iter().filter_map(|event| event.usd_saved).sum();
+        let tokens: u64 = events.iter().filter_map(|event| event.tokens_saved).sum();
+        assert!((usd - meter.dollars_usd).abs() <= meter.dollars_usd * 0.05);
+        assert!(
+            (tokens as f64 - meter.tokens_saved as f64).abs() <= meter.tokens_saved as f64 * 0.05
+        );
+
+        // A second run does not record a day twice.
+        record_usage_summaries(&manager, &preferences, &storage, "1.1.0", NOW).unwrap();
+        assert_eq!(manager.pending().unwrap().len(), 3);
+
+        // A consent that starts yesterday never reads an earlier day.
+        let (_directory, late_manager, late_preferences) = consenting_managers("usage-late", 2);
+        late_manager
+            .apply_sharing(Sharing::Nothing, Sharing::V2, NOW - DAY_SECONDS)
+            .unwrap();
+        record_usage_summaries(&late_manager, &late_preferences, &storage, "1.1.0", NOW).unwrap();
+        let days = late_manager
+            .pending()
+            .unwrap()
+            .iter()
+            .map(|event| event.day)
+            .collect::<Vec<_>>();
+        assert_eq!(days, vec![Some(today - 1)]);
+    }
+
+    #[test]
+    fn the_start_records_the_update_and_the_crash_under_version_2_only() {
+        let history = [
+            boot_entry(
+                "1.1.0",
+                "2026-10-22T10:00:00.000Z",
+                "2026-10-22T10:00:00.000Z",
+                ShutdownKind::Running,
+                None,
+            ),
+            boot_entry(
+                "1.0.1",
+                "2026-10-22T09:00:00.000Z",
+                "2026-10-22T09:30:00.000Z",
+                ShutdownKind::Unclean,
+                Some(1536 * MIB),
+            ),
+        ];
+
+        let (_directory, manager, preferences) = consenting_managers("start-v2", 2);
+        // The first start has no stored version, so it records no update.
+        assert!(!record_start_events(
+            &manager,
+            &preferences,
+            "1.0.1",
+            &[],
+            NOW
+        ));
+        assert_eq!(manager.consent_v2_day().unwrap(), Some(today()));
+        assert!(record_start_events(
+            &manager,
+            &preferences,
+            "1.1.0",
+            &history,
+            NOW
+        ));
+        let events = manager.pending().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event, APP_UPDATED);
+        assert_eq!(events[0].from_version.as_deref(), Some("1.0.1"));
+        assert_eq!(events[0].app_version.as_deref(), Some("1.1.0"));
+        assert_eq!(events[1].event, CRASH_DETECTED);
+        assert_eq!(events[1].prev_app_version.as_deref(), Some("1.0.1"));
+        assert_eq!(events[1].uptime_bucket.as_deref(), Some("10m_1h"));
+        assert_eq!(events[1].rss_bucket.as_deref(), Some("1gb_2gb"));
+        // The same start again adds nothing.
+        record_start_events(&manager, &preferences, "1.1.0", &history, NOW);
+        assert_eq!(manager.pending().unwrap().len(), 2);
+
+        // Version 1 and no answer store the version, and record nothing.
+        let (_v1_directory, v1_manager, v1_preferences) = consenting_managers("start-v1", 1);
+        let directory = TestDirectory::new("start-unset");
+        let unset_manager = AnalyticsManager::open(&directory.0).unwrap();
+        let unset_preferences = PreferencesManager::open(&directory.0).unwrap();
+        for (manager, preferences) in [
+            (&v1_manager, &v1_preferences),
+            (&unset_manager, &unset_preferences),
+        ] {
+            record_start_events(manager, preferences, "1.0.1", &[], NOW);
+            assert!(!record_start_events(
+                manager,
+                preferences,
+                "1.1.0",
+                &history,
+                NOW
+            ));
+            assert!(manager.pending().unwrap().is_empty());
+            assert_eq!(manager.consent_v2_day().unwrap(), None);
+            assert_eq!(
+                manager.state().unwrap().last_app_version.as_deref(),
+                Some("1.1.0")
+            );
+        }
     }
 
     #[test]
