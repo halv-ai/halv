@@ -20,6 +20,23 @@ pub(crate) struct ReleaseInfo {
 /// Receives the size of each downloaded chunk and the total size.
 pub(crate) type ChunkCallback = Box<dyn FnMut(usize, Option<u64>) + Send>;
 
+/// A failed download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DownloadError {
+    pub message: String,
+    /// The archive does not match the release signature.
+    pub signature: bool,
+}
+
+impl DownloadError {
+    pub(crate) fn other(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            signature: false,
+        }
+    }
+}
+
 pub(crate) trait UpdateSource: Send + Sync {
     /// Asks the feed for a release that is newer than the running app.
     fn check(&self, timeout: Duration) -> BoxFuture<'static, Result<Option<ReleaseInfo>, String>>;
@@ -30,7 +47,7 @@ pub(crate) trait UpdateSource: Send + Sync {
         &self,
         version: &str,
         on_chunk: ChunkCallback,
-    ) -> BoxFuture<'static, Result<Vec<u8>, String>>;
+    ) -> BoxFuture<'static, Result<Vec<u8>, DownloadError>>;
 
     /// Installs the archive. It blocks, so never call it on the main thread:
     /// the macOS admin path waits for the main thread.
@@ -102,13 +119,24 @@ impl UpdateSource for PluginUpdateSource {
         &self,
         version: &str,
         on_chunk: ChunkCallback,
-    ) -> BoxFuture<'static, Result<Vec<u8>, String>> {
+    ) -> BoxFuture<'static, Result<Vec<u8>, DownloadError>> {
         let update = self.update_for(version);
         Box::pin(async move {
-            update?
+            update
+                .map_err(DownloadError::other)?
                 .download(on_chunk, || {})
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| DownloadError {
+                    // The plugin checks the signature after the download.
+                    // These errors come only from that check.
+                    signature: matches!(
+                        error,
+                        tauri_plugin_updater::Error::Minisign(_)
+                            | tauri_plugin_updater::Error::Base64(_)
+                            | tauri_plugin_updater::Error::SignatureUtf8(_)
+                    ),
+                    message: error.to_string(),
+                })
         })
     }
 
@@ -134,6 +162,8 @@ pub(crate) mod fake {
             delay: Duration,
         },
         Fail(String),
+        /// Fails the signature check.
+        BadSignature(String),
         /// Never sends a chunk.
         Hang,
     }
@@ -190,7 +220,7 @@ pub(crate) mod fake {
             &self,
             _version: &str,
             mut on_chunk: ChunkCallback,
-        ) -> BoxFuture<'static, Result<Vec<u8>, String>> {
+        ) -> BoxFuture<'static, Result<Vec<u8>, DownloadError>> {
             self.download_calls.fetch_add(1, Ordering::SeqCst);
             let download = self
                 .downloads
@@ -212,7 +242,11 @@ pub(crate) mod fake {
                         }
                         Ok(bytes)
                     }
-                    FakeDownload::Fail(message) => Err(message),
+                    FakeDownload::Fail(message) => Err(DownloadError::other(message)),
+                    FakeDownload::BadSignature(message) => Err(DownloadError {
+                        message,
+                        signature: true,
+                    }),
                     FakeDownload::Hang => std::future::pending().await,
                 }
             })

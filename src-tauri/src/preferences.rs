@@ -108,6 +108,12 @@ pub struct AgentPreferences {
     /// Always `analytics_consent == On`. The file keeps it for older app
     /// versions. On load, it is only the input of the migration.
     pub analytics_enabled: bool,
+    /// The list version that the "on" answer covers: 1 or 2 (ADR 0022). A
+    /// file without the key reads 1.
+    pub analytics_consent_version: u8,
+    /// The newest list version that the app asked about: 0, 1 or 2 (ADR
+    /// 0022). A file without the key reads 1 after an answer, else 0.
+    pub analytics_consent_asked: u8,
     pub default_model: Option<String>,
     pub default_effort: Option<String>,
     pub default_agent_mode: bool,
@@ -145,6 +151,8 @@ impl Default for AgentPreferences {
             claude_ultracode: false,
             analytics_consent: AnalyticsConsent::Unset,
             analytics_enabled: false,
+            analytics_consent_version: 1,
+            analytics_consent_asked: 0,
             default_model: None,
             default_effort: None,
             default_agent_mode: true,
@@ -240,11 +248,13 @@ impl PreferencesManager {
     }
 
     /// True only when the user agreed to usage events.
+    #[cfg(test)]
     pub fn analytics_enabled(&self) -> Result<bool, String> {
         self.analytics_consent()
             .map(|consent| consent == AnalyticsConsent::On)
     }
 
+    #[cfg(test)]
     pub fn analytics_consent(&self) -> Result<AnalyticsConsent, String> {
         self.get().map(|preferences| preferences.analytics_consent)
     }
@@ -426,15 +436,22 @@ impl PreferencesManager {
 
     /// Saves the answer of the user. `Unset` is not an answer.
     ///
-    /// An "off" answer fails closed: the running session stops events
+    /// "On" covers list version 2 unless `consent_version` is 1 (ADR 0022).
+    /// "Off" keeps the version. Each answer sets the asked version to 2.
+    ///
+    /// An answer that shares less fails closed: the running session uses it
     /// before the write, so a failed write still keeps the "no". The error
     /// tells the caller that the answer did not persist.
     pub fn set_analytics_consent(
         &self,
         consent: AnalyticsConsent,
+        consent_version: Option<u8>,
     ) -> Result<AgentPreferences, String> {
         if consent == AnalyticsConsent::Unset {
             return Err("Usage events consent must be on or off".to_string());
+        }
+        if consent == AnalyticsConsent::On && consent_version.is_some_and(|v| !matches!(v, 1 | 2)) {
+            return Err("Usage events consent version must be 1 or 2".to_string());
         }
         let mut current = self
             .preferences
@@ -443,7 +460,11 @@ impl PreferencesManager {
         let mut next = current.clone();
         next.analytics_consent = consent;
         next.analytics_enabled = consent == AnalyticsConsent::On;
-        if consent == AnalyticsConsent::Off {
+        if consent == AnalyticsConsent::On {
+            next.analytics_consent_version = consent_version.unwrap_or(2);
+        }
+        next.analytics_consent_asked = 2;
+        if sharing_rank(&next) < sharing_rank(&current) {
             *current = next.clone();
         }
         write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
@@ -537,20 +558,51 @@ impl PreferencesManager {
 }
 
 /// Reads a preferences file. A file without `analyticsConsent` comes from a
-/// version that sent usage events without asking (ADR 0021).
+/// version that sent usage events without asking (ADR 0021). A file without
+/// `analyticsConsentVersion` or `analyticsConsentAsked` comes from a version
+/// before ADR 0022.
 fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
-    let value = serde_json::from_slice::<serde_json::Value>(contents)?;
+    let mut value = serde_json::from_slice::<serde_json::Value>(contents)?;
     let has_consent = value.get("analyticsConsent").is_some();
     let legacy_analytics_enabled = value
         .get("analyticsEnabled")
         .and_then(serde_json::Value::as_bool);
+    // A value outside its range counts as a missing key, so a damaged value
+    // never stops the app from starting.
+    if let Some(object) = value.as_object_mut() {
+        for (key, max) in [("analyticsConsentVersion", 2), ("analyticsConsentAsked", 2)] {
+            let valid = object
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|number| number <= max);
+            if !valid {
+                object.remove(key);
+            }
+        }
+    }
+    let has_asked = value.get("analyticsConsentAsked").is_some();
     let mut preferences = serde_json::from_value::<AgentPreferences>(value)?;
     if !has_consent {
         preferences.analytics_consent =
             AnalyticsConsent::from_legacy_analytics_enabled(legacy_analytics_enabled);
     }
     preferences.analytics_enabled = preferences.analytics_consent == AnalyticsConsent::On;
+    // Version 0 is not a list version. An "on" answer covers at least 1.
+    preferences.analytics_consent_version = preferences.analytics_consent_version.max(1);
+    if !has_asked {
+        preferences.analytics_consent_asked =
+            u8::from(preferences.analytics_consent != AnalyticsConsent::Unset);
+    }
     Ok(preferences)
+}
+
+/// How much an answer shares: nothing, list version 1, or list version 2.
+fn sharing_rank(preferences: &AgentPreferences) -> u8 {
+    if preferences.analytics_consent == AnalyticsConsent::On {
+        preferences.analytics_consent_version
+    } else {
+        0
+    }
 }
 
 fn normalize_required_preference(value: String, label: &str) -> Result<String, String> {
@@ -769,14 +821,38 @@ pub fn preferences_set_analytics_consent(
     manager: tauri::State<'_, PreferencesManager>,
     analytics: tauri::State<'_, crate::analytics::AnalyticsManager>,
     consent: AnalyticsConsent,
+    consent_version: Option<u8>,
 ) -> Result<AgentPreferences, String> {
-    // An "off" answer holds for the running session also when a write fails.
-    // The manager keeps the answer in memory, and the queue drops its events
-    // before the result goes back.
-    let preferences = manager.set_analytics_consent(consent);
-    if consent != AnalyticsConsent::On {
-        analytics.clear_pending()?;
-    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("System time is before the Unix epoch: {error}"))?;
+    apply_analytics_consent(&manager, &analytics, consent, consent_version, now)
+}
+
+/// Saves the answer and makes the queue follow it (ADR 0021, ADR 0022).
+///
+/// An answer that shares less holds for the running session also when a
+/// write fails. The manager keeps the answer in memory, and the queue drops
+/// the events or the v2 data before the result goes back.
+fn apply_analytics_consent(
+    manager: &PreferencesManager,
+    analytics: &crate::analytics::AnalyticsManager,
+    consent: AnalyticsConsent,
+    consent_version: Option<u8>,
+    now: u64,
+) -> Result<AgentPreferences, String> {
+    use crate::analytics::Sharing;
+    let sharing = |preferences: &AgentPreferences| {
+        Sharing::from_consent(
+            preferences.analytics_consent,
+            preferences.analytics_consent_version,
+        )
+    };
+    let previous = sharing(&manager.get()?);
+    let preferences = manager.set_analytics_consent(consent, consent_version);
+    let current = sharing(&manager.get()?);
+    analytics.apply_sharing(previous, current, now)?;
     preferences
 }
 
@@ -795,6 +871,7 @@ pub fn preferences_set_analytics_enabled(
         } else {
             AnalyticsConsent::Off
         },
+        None,
     )
 }
 
@@ -1123,11 +1200,11 @@ mod tests {
         );
         assert!(!manager.analytics_enabled().expect("read default"));
         assert!(manager
-            .set_analytics_consent(AnalyticsConsent::Unset)
+            .set_analytics_consent(AnalyticsConsent::Unset, None)
             .is_err());
 
         let saved = manager
-            .set_analytics_consent(AnalyticsConsent::On)
+            .set_analytics_consent(AnalyticsConsent::On, None)
             .expect("agree to analytics");
         assert_eq!(saved.analytics_consent, AnalyticsConsent::On);
         assert!(saved.analytics_enabled);
@@ -1135,7 +1212,7 @@ mod tests {
         assert!(reopened.analytics_enabled().expect("read persisted value"));
 
         let saved = reopened
-            .set_analytics_consent(AnalyticsConsent::Off)
+            .set_analytics_consent(AnalyticsConsent::Off, None)
             .expect("decline analytics");
         assert_eq!(saved.analytics_consent, AnalyticsConsent::Off);
         let file = serde_json::from_slice::<serde_json::Value>(
@@ -1156,7 +1233,7 @@ mod tests {
         let directory = TestDirectory::new("analytics-off-write-fails");
         let manager = PreferencesManager::open(&directory.0).expect("open preferences");
         manager
-            .set_analytics_consent(AnalyticsConsent::On)
+            .set_analytics_consent(AnalyticsConsent::On, None)
             .expect("agree to analytics");
         assert!(manager.analytics_enabled().expect("read consent"));
 
@@ -1168,7 +1245,7 @@ mod tests {
         fs::create_dir_all(&temporary_path).expect("block the temporary file");
 
         assert!(manager
-            .set_analytics_consent(AnalyticsConsent::Off)
+            .set_analytics_consent(AnalyticsConsent::Off, None)
             .is_err());
         assert!(!manager.analytics_enabled().expect("read consent"));
         assert_eq!(
@@ -1215,6 +1292,194 @@ mod tests {
     }
 
     #[test]
+    fn analytics_consent_version_and_asked_migrate_from_older_files() {
+        // (file, consent, version, asked)
+        let cases = [
+            // A fresh install was not asked yet.
+            ("{}", AnalyticsConsent::Unset, 1, 0),
+            // An "on" answer from before ADR 0022 covers list version 1.
+            (
+                r#"{ "analyticsConsent": "on" }"#,
+                AnalyticsConsent::On,
+                1,
+                1,
+            ),
+            (
+                r#"{ "analyticsConsent": "off" }"#,
+                AnalyticsConsent::Off,
+                1,
+                1,
+            ),
+            (
+                r#"{ "analyticsEnabled": false }"#,
+                AnalyticsConsent::Off,
+                1,
+                1,
+            ),
+            (
+                r#"{ "analyticsConsent": "on", "analyticsConsentVersion": 2, "analyticsConsentAsked": 2 }"#,
+                AnalyticsConsent::On,
+                2,
+                2,
+            ),
+            // A damaged value never stops the start and never adds sharing.
+            (
+                r#"{ "analyticsConsent": "on", "analyticsConsentVersion": 7, "analyticsConsentAsked": 300 }"#,
+                AnalyticsConsent::On,
+                1,
+                1,
+            ),
+            (
+                r#"{ "analyticsConsent": "on", "analyticsConsentVersion": 0 }"#,
+                AnalyticsConsent::On,
+                1,
+                1,
+            ),
+            (
+                r#"{ "analyticsConsent": "unset", "analyticsConsentVersion": "2" }"#,
+                AnalyticsConsent::Unset,
+                1,
+                0,
+            ),
+        ];
+        for (contents, consent, version, asked) in cases {
+            let preferences = parse_preferences(contents.as_bytes()).expect(contents);
+            assert_eq!(preferences.analytics_consent, consent, "{contents}");
+            assert_eq!(preferences.analytics_consent_version, version, "{contents}");
+            assert_eq!(preferences.analytics_consent_asked, asked, "{contents}");
+        }
+        let saved = serde_json::to_value(AgentPreferences::default()).unwrap();
+        assert_eq!(saved["analyticsConsentVersion"], 1);
+        assert_eq!(saved["analyticsConsentAsked"], 0);
+    }
+
+    #[test]
+    fn each_answer_sets_the_list_version_and_marks_version_2_as_asked() {
+        let directory = TestDirectory::new("analytics-consent-version");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        // "On" without a version covers list version 2.
+        let saved = manager
+            .set_analytics_consent(AnalyticsConsent::On, None)
+            .expect("agree");
+        assert_eq!(
+            (
+                saved.analytics_consent_version,
+                saved.analytics_consent_asked
+            ),
+            (2, 2)
+        );
+        // "No" on the notice keeps list version 1.
+        let saved = manager
+            .set_analytics_consent(AnalyticsConsent::On, Some(1))
+            .expect("keep version 1");
+        assert_eq!(
+            (
+                saved.analytics_consent_version,
+                saved.analytics_consent_asked
+            ),
+            (1, 2)
+        );
+        // "Off" keeps the version.
+        let saved = manager
+            .set_analytics_consent(AnalyticsConsent::Off, Some(2))
+            .expect("decline");
+        assert_eq!(saved.analytics_consent, AnalyticsConsent::Off);
+        assert_eq!(saved.analytics_consent_version, 1);
+        for version in [0, 3] {
+            assert!(manager
+                .set_analytics_consent(AnalyticsConsent::On, Some(version))
+                .is_err());
+        }
+        assert_eq!(
+            manager.analytics_consent().unwrap(),
+            AnalyticsConsent::Off,
+            "a bad version changes nothing"
+        );
+        manager
+            .set_analytics_consent(AnalyticsConsent::On, Some(2))
+            .expect("agree to version 2");
+        let file = serde_json::from_slice::<serde_json::Value>(
+            &fs::read(directory.0.join(PREFERENCES_FILE_NAME)).expect("read preferences file"),
+        )
+        .expect("parse preferences file");
+        assert_eq!(file["analyticsConsentVersion"], 2);
+        assert_eq!(file["analyticsConsentAsked"], 2);
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(reopened.get().unwrap().analytics_consent_version, 2);
+    }
+
+    #[test]
+    fn a_move_to_version_1_holds_in_memory_when_the_write_fails() {
+        let directory = TestDirectory::new("analytics-version-write-fails");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        manager
+            .set_analytics_consent(AnalyticsConsent::On, Some(2))
+            .expect("agree to version 2");
+        let temporary_path = directory
+            .0
+            .join(PREFERENCES_FILE_NAME)
+            .with_extension("json.tmp");
+        fs::create_dir_all(&temporary_path).expect("block the temporary file");
+        assert!(manager
+            .set_analytics_consent(AnalyticsConsent::On, Some(1))
+            .is_err());
+        assert_eq!(manager.get().unwrap().analytics_consent_version, 1);
+    }
+
+    #[test]
+    fn the_answer_moves_the_analytics_queue_and_the_consent_day() {
+        use crate::analytics::{AnalyticsManager, Sharing};
+        let directory = TestDirectory::new("analytics-consent-queue");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        let analytics = AnalyticsManager::open(&directory.0).expect("open analytics");
+        let day = 20_000;
+        let now = day * 86_400 + 60;
+
+        let saved = apply_analytics_consent(&manager, &analytics, AnalyticsConsent::On, None, now)
+            .expect("agree to version 2");
+        assert_eq!(saved.analytics_consent_version, 2);
+        assert_eq!(analytics.consent_v2_day().unwrap(), Some(day));
+        // A later "on" for version 2 keeps the first day.
+        apply_analytics_consent(
+            &manager,
+            &analytics,
+            AnalyticsConsent::On,
+            Some(2),
+            now + 86_400,
+        )
+        .unwrap();
+        assert_eq!(analytics.consent_v2_day().unwrap(), Some(day));
+        // Version 1 removes the day. A new move to version 2 starts later.
+        apply_analytics_consent(
+            &manager,
+            &analytics,
+            AnalyticsConsent::On,
+            Some(1),
+            now + 86_400,
+        )
+        .unwrap();
+        assert_eq!(analytics.consent_v2_day().unwrap(), None);
+        apply_analytics_consent(
+            &manager,
+            &analytics,
+            AnalyticsConsent::On,
+            Some(2),
+            now + 3 * 86_400,
+        )
+        .unwrap();
+        assert_eq!(analytics.consent_v2_day().unwrap(), Some(day + 3));
+        apply_analytics_consent(&manager, &analytics, AnalyticsConsent::Off, None, now).unwrap();
+        assert_eq!(analytics.consent_v2_day().unwrap(), None);
+        assert_eq!(
+            Sharing::from_consent(
+                manager.analytics_consent().unwrap(),
+                manager.get().unwrap().analytics_consent_version
+            ),
+            Sharing::Nothing
+        );
+    }
+
+    #[test]
     fn app_update_auto_download_defaults_on_and_roundtrips() {
         assert!(AgentPreferences::default().app_update_auto_download);
         assert!(
@@ -1226,7 +1491,7 @@ mod tests {
         let directory = TestDirectory::new("app-update-auto-download");
         let manager = PreferencesManager::open(&directory.0).expect("open preferences");
         manager
-            .set_analytics_consent(AnalyticsConsent::Off)
+            .set_analytics_consent(AnalyticsConsent::Off, None)
             .expect("set analytics preference");
         let saved = manager
             .set_app_update_auto_download(false)

@@ -969,7 +969,16 @@ struct SidecarInner {
     optimization_paused: AtomicBool,
     upstream: Option<SidecarUpstream>,
     client: reqwest::Client,
+    /// Receives the proxy failures for the usage events (ADR 0022).
+    failure_reporter: RwLock<Option<ProxyFailureReporter>>,
+    /// The child exited and the outcome of the automatic restart is not
+    /// reported yet.
+    exit_report_pending: AtomicBool,
 }
+
+/// Receives a proxy failure: the `proxy_failed` category and true when the
+/// automatic restart brought the proxy back.
+pub(crate) type ProxyFailureReporter = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
 #[derive(Debug, PartialEq, Eq)]
 enum AutoHealReservation {
@@ -1039,6 +1048,8 @@ impl SidecarManager {
                 optimization_paused: AtomicBool::new(false),
                 upstream,
                 client,
+                failure_reporter: RwLock::new(None),
+                exit_report_pending: AtomicBool::new(false),
             }),
         }
     }
@@ -1082,6 +1093,33 @@ impl SidecarManager {
             .expect("resource dir lock poisoned") = Some(resource_dir);
     }
 
+    pub(crate) fn set_failure_reporter(&self, reporter: ProxyFailureReporter) {
+        *self
+            .inner
+            .failure_reporter
+            .write()
+            .expect("failure reporter lock poisoned") = Some(reporter);
+    }
+
+    fn report_failure(&self, category: &str, recovered: bool) {
+        let reporter = self
+            .inner
+            .failure_reporter
+            .read()
+            .expect("failure reporter lock poisoned")
+            .clone();
+        if let Some(reporter) = reporter {
+            reporter(category, recovered);
+        }
+    }
+
+    /// Reports the exit of the child once, with the outcome of the restart.
+    fn report_exit_outcome(&self, recovered: bool) {
+        if self.inner.exit_report_pending.swap(false, Ordering::SeqCst) {
+            self.report_failure(crate::analytics::PROXY_EXIT, recovered);
+        }
+    }
+
     pub async fn refresh_status(&self) -> SidecarStatus {
         let Ok(_guard) = self.inner.op_lock.try_lock() else {
             return self.current_status();
@@ -1105,7 +1143,10 @@ impl SidecarManager {
     /// bundle is version-coupled to the app and is never replaced by uv/pipx.
     pub async fn startup(&self) {
         self.reap_orphaned_headroom_proxies();
-        self.ensure_ready().await;
+        let status = self.ensure_ready().await;
+        if matches!(status, SidecarStatus::Error { .. }) && !self.is_terminated() {
+            self.report_failure(crate::analytics::PROXY_START, false);
+        }
         self.spawn_supervisor();
     }
 
@@ -1154,6 +1195,7 @@ impl SidecarManager {
     fn take_child_exit_status(&self) -> Option<SidecarStatus> {
         let port = self.port();
         let exit = self.take_child_exit()?;
+        self.inner.exit_report_pending.store(true, Ordering::SeqCst);
         Some(SidecarStatus::Error {
             message: exit.runtime_message(port),
             port,
@@ -1773,6 +1815,8 @@ impl SidecarManager {
         if !self.binary_is_managed_by_halv() {
             self.kill_child();
             self.set_status(status.clone());
+            // Halv restarts only its own binary, so this exit stays down.
+            self.report_exit_outcome(false);
             return status;
         }
 
@@ -1824,7 +1868,11 @@ impl SidecarManager {
                     if manager.is_terminated() {
                         return;
                     }
-                    manager.ensure_ready_locked().await;
+                    let status = manager.ensure_ready_locked().await;
+                    if !manager.is_terminated() {
+                        manager
+                            .report_exit_outcome(matches!(status, SidecarStatus::Running { .. }));
+                    }
                 }));
                 starting
             }
@@ -5311,6 +5359,44 @@ exit 23
         drop(op_guard);
         tokio::task::yield_now().await;
         cleanup_dir(&root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unexpected_exit_reports_the_restart_outcome_once() {
+        let manager = SidecarManager::new(DEFAULT_PORT);
+        let reports = Arc::new(StdMutex::new(Vec::new()));
+        let sink = reports.clone();
+        manager.set_failure_reporter(Arc::new(move |category: &str, recovered: bool| {
+            sink.lock()
+                .expect("reports lock should not be poisoned")
+                .push((category.to_string(), recovered));
+        }));
+        // Halv restarts only its own binary, so this child stays down.
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 3"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("short-lived child should spawn");
+        child.wait().expect("child should exit");
+        manager.replace_child(Some(ManagedChild {
+            process: child,
+            stderr_drain: None,
+            stderr_done: None,
+        }));
+
+        let op_guard = manager.inner.op_lock.lock().await;
+        manager.refresh_status_locked().await;
+        manager.refresh_status_locked().await;
+        drop(op_guard);
+
+        assert_eq!(
+            *reports.lock().expect("reports lock should not be poisoned"),
+            vec![(crate::analytics::PROXY_EXIT.to_string(), false)]
+        );
+        manager.shutdown();
     }
 
     #[cfg(unix)]

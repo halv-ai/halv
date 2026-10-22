@@ -344,6 +344,64 @@ pub(crate) fn daily_token_activity_sql() -> String {
     )
 }
 
+/// The local usage of one UTC day for the daily usage summary (ADR 0022).
+/// The values are exact. The analytics module rounds them before they leave
+/// the device.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct UtcDayUsage {
+    /// The stored agent kind of each agent session with activity on the day.
+    pub agent_kinds: Vec<String>,
+    pub tokens_saved: i64,
+    /// The dollars saved with the methods of ADR 0015.
+    pub dollars_usd: f64,
+    pub crux_tokens_saved: i64,
+    /// The routed tasks with a receipt on the day.
+    pub routed_tasks: i64,
+}
+
+/// The savings of one UTC day, `?2 <= created_at < ?3`. Tokens and dollars
+/// count the assistant events, as the savings meter does.
+pub(crate) fn utc_day_savings_sql() -> String {
+    let events = savings_events_sql();
+    format!(
+        "SELECT
+            COALESCE(SUM(CASE WHEN role = 'assistant'
+                         THEN COALESCE(tokens_saved, 0) ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN role = 'assistant' AND usd_method IS NOT NULL
+                         THEN COALESCE(savings_usd, 0.0) ELSE 0.0 END), 0.0),
+            COALESCE(SUM(COALESCE(crux_tokens_saved, 0)), 0)
+         FROM ({events}) AS savings_events
+         WHERE julianday(created_at) >= julianday(?2)
+           AND julianday(created_at) < julianday(?3)"
+    )
+}
+
+/// The agent kind of each agent session with activity in one UTC day,
+/// `?1 <= time < ?2`. A session counts on the day when it starts, records a
+/// turn, or was last active.
+pub(crate) fn utc_day_agent_sessions_sql() -> &'static str {
+    "SELECT a.agent_kind
+     FROM agent_sessions a
+     WHERE (julianday(a.created_at) >= julianday(?1)
+            AND julianday(a.created_at) < julianday(?2))
+        OR (julianday(a.last_active_at) >= julianday(?1)
+            AND julianday(a.last_active_at) < julianday(?2))
+        OR EXISTS (
+            SELECT 1 FROM agent_session_turns t
+            WHERE t.session_id = a.id
+              AND julianday(t.created_at) >= julianday(?1)
+              AND julianday(t.created_at) < julianday(?2)
+        )"
+}
+
+/// The routed tasks with a receipt in one UTC day, `?1 <= time < ?2`.
+pub(crate) fn utc_day_routed_tasks_sql() -> &'static str {
+    "SELECT COUNT(*)
+     FROM task_route_receipts
+     WHERE julianday(reported_at) >= julianday(?1)
+       AND julianday(reported_at) < julianday(?2)"
+}
+
 pub(crate) fn mcp_session_savings_sql() -> String {
     format!(
         "SELECT
@@ -542,6 +600,83 @@ mod tests {
 
     fn storage_from(connection: Connection) -> Storage {
         Storage::from_test_connection(connection, "2026-08-20T00:00:00Z")
+    }
+
+    #[test]
+    fn utc_day_usage_counts_only_the_events_of_that_utc_day() {
+        let connection = migrated_connection();
+        for (session_id, tokens_saved, created_at) in [
+            ("inside", 300, "2026-08-20T23:59:59Z"),
+            ("next-day", 900, "2026-08-21T00:00:00Z"),
+        ] {
+            insert_agent_turn(
+                &connection,
+                TurnFixture {
+                    session_id,
+                    mode: "terminal_embedded",
+                    tokens_saved,
+                    savings_usd: Some(0.4),
+                    pricing_source: Some("model_table"),
+                    has_message_snapshot: false,
+                    created_at,
+                    occurred_local_date: &created_at[..10],
+                },
+            );
+        }
+        connection
+            .execute_batch(
+                "UPDATE agent_session_turns
+                    SET usd_method = 'input_once', crux_tokens_saved = 7;
+                 -- A session of an earlier day with a turn on the day.
+                 INSERT INTO agent_sessions
+                    (id, agent_kind, lane, mode, cwd, status, created_at,
+                     last_active_at)
+                 VALUES ('older', 'zai', 'zai', 'terminal_embedded', '/tmp',
+                         'completed', '2026-08-18T10:00:00Z',
+                         '2026-08-22T10:00:00Z');
+                 INSERT INTO agent_session_turns
+                    (session_id, turn_index, input_tokens, output_tokens,
+                     cache_read_tokens, cache_creation_tokens, savings_tokens,
+                     created_at, occurred_local_date)
+                 VALUES ('older', 0, 1, 1, 0, 0, 0,
+                         '2026-08-20T08:00:00+02:00', '2026-08-20');
+                 -- A session without activity on the day.
+                 INSERT INTO agent_sessions
+                    (id, agent_kind, lane, mode, cwd, status, created_at,
+                     last_active_at)
+                 VALUES ('idle', 'claude', 'claude', 'terminal_embedded', '/tmp',
+                         'completed', '2026-08-18T10:00:00Z',
+                         '2026-08-22T10:00:00Z');
+                 INSERT INTO task_routes
+                    (id, session_id, title, brief_chars, complexity,
+                     complexity_confidence, needs_reasoning, risky, tier, lane,
+                     reasons_json, status, provider, provider_model, latency_ms,
+                     created_at, updated_at)
+                 VALUES ('route-1', 'inside', 'Task', 10, 'low', 0.9, 0.1, 0.1,
+                         'cheap', 'codex', '[]', 'passed', 'local', 'rules', 1,
+                         '2026-08-20T12:00:00Z', '2026-08-20T12:00:00Z');
+                 INSERT INTO task_route_receipts
+                    (route_id, session_id, outcome, usage_source, reported_at)
+                 VALUES ('route-1', 'inside', 'passed', 'none',
+                         '2026-08-20T12:30:00Z');",
+            )
+            .expect("usage fixtures should insert");
+
+        let storage = storage_from(connection);
+        let mut usage = storage
+            .utc_day_usage("2026-08-20T00:00:00Z", "2026-08-21T00:00:00Z")
+            .expect("day usage should load");
+        usage.agent_kinds.sort();
+        assert_eq!(usage.agent_kinds, vec!["codex", "zai"]);
+        assert_eq!(usage.tokens_saved, 300);
+        assert!((usage.dollars_usd - 0.4).abs() < 1e-12);
+        assert_eq!(usage.crux_tokens_saved, 7);
+        assert_eq!(usage.routed_tasks, 1);
+
+        let empty = storage
+            .utc_day_usage("2026-08-19T00:00:00Z", "2026-08-20T00:00:00Z")
+            .expect("day usage should load");
+        assert_eq!(empty, UtcDayUsage::default());
     }
 
     #[test]

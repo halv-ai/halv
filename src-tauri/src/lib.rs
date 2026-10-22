@@ -134,6 +134,7 @@ pub fn run() {
             app.manage(preferences);
             app.manage(analytics::AnalyticsManager::open(&app_data_dir)?);
             analytics::listen_for_download_links(app.handle());
+            analytics::on_app_start(app.handle());
             agent_sessions::spawn_transcript_watcher(
                 app.handle().clone(),
                 app.state::<agent_sessions::AgentSessionManager>()
@@ -185,6 +186,12 @@ pub fn run() {
             agent_sessions::install::set_managed_root(app_data_dir.join("bin"));
             sidecar_manager.set_resource_dir(app.path().resource_dir()?);
             auth::spawn_savings_reporter(app.handle().clone());
+            let analytics_app = app.handle().clone();
+            sidecar_manager.set_failure_reporter(std::sync::Arc::new(
+                move |category: &str, recovered: bool| {
+                    analytics::record_proxy_failure(&analytics_app, category, recovered);
+                },
+            ));
             pricing::refresh::spawn(app.handle().clone());
             // The Headroom proxy never pauses for the plan of the account
             // (ADR 0021), so startup does not read the cached entitlements.
@@ -271,6 +278,7 @@ pub fn run() {
             analytics::analytics_flush,
             analytics::analytics_install_id,
             analytics::analytics_attribution_get,
+            analytics::analytics_set_locale,
             automations::automation_list,
             automations::automation_upsert,
             automations::automation_set_enabled,

@@ -4021,6 +4021,37 @@ impl Storage {
         Ok(rows)
     }
 
+    /// The local usage of one UTC day for the daily usage summary (ADR
+    /// 0022). The day is `start <= time < end`, in RFC 3339 times.
+    pub(crate) fn utc_day_usage(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> StorageResult<savings::UtcDayUsage> {
+        let connection = self.connection.lock().expect("storage lock poisoned");
+        let (tokens_saved, dollars_usd, crux_tokens_saved) = connection.query_row(
+            &savings::utc_day_savings_sql(),
+            params![savings_usd_for_tokens(1), start, end],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        let agent_kinds = connection
+            .prepare(savings::utc_day_agent_sessions_sql())?
+            .query_map(params![start, end], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let routed_tasks = connection.query_row(
+            savings::utc_day_routed_tasks_sql(),
+            params![start, end],
+            |row| row.get(0),
+        )?;
+        Ok(savings::UtcDayUsage {
+            agent_kinds,
+            tokens_saved,
+            dollars_usd,
+            crux_tokens_saved,
+            routed_tasks,
+        })
+    }
+
     pub fn list_conversations(&self) -> StorageResult<Vec<ConversationSummary>> {
         let connection = self.connection.lock().expect("storage lock poisoned");
         let mut statement = connection.prepare(

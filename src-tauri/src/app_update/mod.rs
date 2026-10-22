@@ -10,6 +10,7 @@ use self::{
     source::{ChunkCallback, PluginUpdateSource, ReleaseInfo, UpdateSource},
     staged::{StagedReadError, StagedUpdate},
 };
+use crate::analytics::{UPDATE_DOWNLOAD, UPDATE_INSTALL, UPDATE_SIGNATURE};
 use serde::Serialize;
 use std::{
     path::{Path, PathBuf},
@@ -376,6 +377,8 @@ pub(crate) trait UpdateHost: Send + Sync {
     fn relaunch(&self) -> Result<(), String>;
     /// Ends Halv after an install at quit.
     fn exit(&self, code: i32);
+    /// Records an `update_failed` usage event with this category (ADR 0022).
+    fn record_failure(&self, category: &'static str);
 }
 
 #[derive(Default)]
@@ -746,14 +749,18 @@ impl AppUpdateManager {
         };
         let download = self.inner.source.download(&release.version, on_chunk);
         let stall_timeout = self.inner.timings.stall_timeout;
-        // Dropping the download future cancels the request.
+        // Dropping the download future cancels the request. A cancel is
+        // not a failure, so it has no usage event category.
         let downloaded = tokio::select! {
-            result = download => result,
-            () = wait_for_stall(progress.clone(), stall_timeout) => Err(format!(
+            result = download => result.map_err(|error| {
+                let category = if error.signature { UPDATE_SIGNATURE } else { UPDATE_DOWNLOAD };
+                (error.message, Some(category))
+            }),
+            () = wait_for_stall(progress.clone(), stall_timeout) => Err((format!(
                 "the download timed out: no data arrived for {} seconds",
                 stall_timeout.as_secs()
-            )),
-            Ok(()) = cancelled => Err("the download was cancelled".to_string()),
+            ), Some(UPDATE_DOWNLOAD))),
+            Ok(()) = cancelled => Err(("the download was cancelled".to_string(), None)),
         };
         let staged = match downloaded {
             Ok(bytes) => {
@@ -764,9 +771,14 @@ impl AppUpdateManager {
                     .await
                     .map_err(|error| error.to_string())
                     .and_then(|written| written.map_err(|error| error.to_string()))
-                    .map_err(|error| format!("failed to save the update: {error}"))
+                    .map_err(|error| {
+                        (
+                            format!("failed to save the update: {error}"),
+                            Some(UPDATE_DOWNLOAD),
+                        )
+                    })
             }
-            Err(message) => Err(message),
+            Err(failure) => Err(failure),
         };
 
         let mut guard = self.lock();
@@ -784,11 +796,14 @@ impl AppUpdateManager {
                 state.failed_download = None;
                 state.status = ready_status(&release);
             }
-            Err(message) => {
+            Err((message, category)) => {
                 eprintln!(
                     "app update: the download of Halv {} failed: {message}",
                     release.version
                 );
+                if let Some(category) = category {
+                    self.inner.host.record_failure(category);
+                }
                 let earlier_attempts = state
                     .failed_download
                     .as_ref()
@@ -971,6 +986,7 @@ impl AppUpdateManager {
                 }
                 Err(failure) => {
                     record_install_failure(state, &staged, failure);
+                    self.inner.host.record_failure(UPDATE_INSTALL);
                     state.exit_allowed |= pending_quit.is_some();
                     self.publish_locked(state);
                     drop(guard);
@@ -1141,6 +1157,8 @@ impl AppUpdateManager {
                     "app update: failed to install Halv {} at quit: {message}",
                     staged.version
                 );
+                // The queue keeps the event for the flush at the next start.
+                self.inner.host.record_failure(UPDATE_INSTALL);
             }
         }
         self.lock().exit_allowed = true;
@@ -1382,6 +1400,10 @@ impl UpdateHost for TauriHost {
         });
         self.app.exit(code);
     }
+
+    fn record_failure(&self, category: &'static str) {
+        crate::analytics::record_update_failure(&self.app, category);
+    }
 }
 
 /// Creates the manager. Call it after the adoption of supervised sessions,
@@ -1546,6 +1568,7 @@ mod tests {
         exits: Mutex<Vec<i32>>,
         hidden: Mutex<usize>,
         sessions_lost: Mutex<bool>,
+        failures: Mutex<Vec<&'static str>>,
     }
 
     impl FakeHost {
@@ -1598,6 +1621,10 @@ mod tests {
 
         fn exit(&self, code: i32) {
             self.exits.lock().unwrap().push(code);
+        }
+
+        fn record_failure(&self, category: &'static str) {
+            self.failures.lock().unwrap().push(category);
         }
     }
 
@@ -1936,6 +1963,52 @@ mod tests {
                 if message == "signature verification failed"
         ));
         assert!(!harness.staged_file("0.7.2").exists());
+        assert_eq!(
+            *harness.host.failures.lock().unwrap(),
+            vec![UPDATE_DOWNLOAD]
+        );
+    }
+
+    #[test]
+    fn a_failed_signature_check_records_the_signature_category() {
+        let harness = Harness::new(InstallMode::Replace);
+        harness.source.push_check(Ok(Some(release("0.7.2"))));
+        harness
+            .source
+            .push_download(FakeDownload::BadSignature("invalid signature".to_string()));
+        harness.manager.check(true);
+        harness.wait_for(|snapshot| is_error(snapshot, UpdateOperation::Download));
+        assert_eq!(
+            *harness.host.failures.lock().unwrap(),
+            vec![UPDATE_SIGNATURE]
+        );
+    }
+
+    #[test]
+    fn a_failed_install_records_a_failure_and_a_cancel_does_not() {
+        let harness = Harness::new(InstallMode::Replace);
+        harness.stage("0.7.2", b"archive");
+        *harness.source.install_error.lock().unwrap() = Some("permission denied".to_string());
+        harness.manager.restart(true).unwrap();
+        harness.wait_for(|snapshot| is_error(snapshot, UpdateOperation::Install));
+        assert_eq!(*harness.host.failures.lock().unwrap(), vec![UPDATE_INSTALL]);
+
+        // Turning off the automatic download cancels it. That is no failure.
+        let harness = Harness::with_timings(
+            InstallMode::Replace,
+            Timings {
+                stall_timeout: Duration::from_secs(30),
+                ..test_timings()
+            },
+        );
+        harness.source.push_check(Ok(Some(release("0.7.3"))));
+        harness.source.push_download(FakeDownload::Hang);
+        harness.manager.check(false);
+        harness.wait_for(|snapshot| matches!(snapshot.status, AppUpdateStatus::Downloading { .. }));
+        harness.manager.set_auto_download(false).unwrap();
+        harness.wait_for(|_| harness.source.ended_downloads.load(Ordering::SeqCst) == 1);
+        thread::sleep(Duration::from_millis(50));
+        assert!(harness.host.failures.lock().unwrap().is_empty());
     }
 
     #[test]

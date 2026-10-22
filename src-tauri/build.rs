@@ -81,6 +81,7 @@ const APP_COMMANDS: &[&str] = &[
     "analytics_flush",
     "analytics_install_id",
     "analytics_attribution_get",
+    "analytics_set_locale",
     "automation_list",
     "automation_upsert",
     "automation_set_enabled",

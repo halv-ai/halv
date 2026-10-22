@@ -84,6 +84,7 @@
     "allow-analytics-flush",
     "allow-analytics-install-id",
     "allow-analytics-attribution-get",
+    "allow-analytics-set-locale",
     "allow-automation-list",
     "allow-automation-upsert",
     "allow-automation-set-enabled",
