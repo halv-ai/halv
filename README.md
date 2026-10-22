@@ -98,8 +98,16 @@ Halv sends data to these places only:
   - Sign-in and billing.
   - Savings reports. A report holds token counts and dollar amounts. It holds no prompts, code, or file contents.
   - Halv Cloud routing. A routing request sends the task brief to halv.ai.
-- **Analytics events to halv.ai.** Halv sends only the events that `src-tauri/src/analytics.rs` lists, with a random install ID and the app version.
-  You can turn off these events in Settings.
+- **Analytics events to halv.ai.** Analytics events are opt-in. Halv sends none until you say yes, and you can change the answer in Settings.
+  `src-tauri/src/analytics.rs` lists every event. Each event carries a random install ID, the app version and the operating system.
+  - Version 1 events: setup steps, first task steps, Halv Cloud trial and checkout steps, and one `active_day` event.
+  - Version 2 events: a daily usage summary (`usage_summarized`), `crash_detected`, `proxy_failed`, `app_updated` and `update_failed`.
+    Version 2 also adds `agent_kind` and `auth_method` to `account_connected`, `surface` to `trial_prompted`, and the language of the UI (`locale`) to each batch.
+  - Halv sends version 2 data only after you answer "Yes" to the version 2 notice. An install that said yes earlier stays on version 1 until you answer the notice.
+  - The daily usage summary holds the agents you used, a bucket for the session count, the tokens and dollars saved (rounded to 2 significant digits), whether you used crux and routing, and your plan.
+  - The Halv server forwards the events to PostHog (EU), a data processor, without an IP address.
+  - Halv never sends prompts, code, file names, terminal output, account emails, API keys, exact savings or stack traces.
+  - The full contract is in [ADR 0022](docs/adr/0022-analytics-v2.md).
 - **GitHub**, to check for app updates.
 - **The relay at relay.halv.ai**, only when you connect a phone (Halv Cloud). The messages are end-to-end encrypted.
 
