@@ -164,7 +164,7 @@ The app maps `AgentKind` to `AGENT` with this table. Any other kind gives `other
   - The "What is sent" list in the app.
   - The README of `github.com/halv-ai/halv`.
   - The privacy page of the site.
-- The release QA checklist in `RELEASING.md` compares the list with the real traffic of a 1-day session.
+- The release QA checklist in `RELEASING.md` compares the list with the real traffic. The capture runs across a UTC midnight, so that it holds a `usage_summarized` event.
 - The usage numbers and the version 2 facts count only the installs on version 2. The funnel counts all installs that opt in, as in ADR 0021. Rates describe the group that opts in.
 - The Halv Cloud pitch waits while the notice shows, as it waits while the banner of ADR 0021 shows. The notice hides where the banner hides: on the welcome screen, in the first-run card and in the prepared first task. The banner shows on one launch only, so the pitch can follow on a later launch. The notice shows on each launch until the user answers. An install that never answers does not see the pitch card. The offers at the point of use (ADR 0021 decision 4) do not wait for the notice.
 - The mobile app is out of scope.
