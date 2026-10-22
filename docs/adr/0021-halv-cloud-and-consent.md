@@ -1,7 +1,7 @@
 # ADR 0021: Halv Cloud and consent
 
 Date: 2026-10-21
-Status: Accepted
+Status: Accepted. Amended by ADR 0022 (decisions 9 and 10, the event list and the facts of each event).
 
 This ADR supersedes the trial wall of ADR 0018. It replaces decisions 1, 2 and 8 of ADR 0018 and the blocking part of decision 3. Decisions 4, 5, 6 and 7 of ADR 0018 stay.
 
@@ -34,8 +34,8 @@ The marketing site sends users to the download. The site cannot tell which downl
 6. **The trial card becomes a pitch card.** The card that ADR 0018 opened after the first result no longer blocks. It appears once after the first result. The user can dismiss it. The dismissal is permanent and lives in `localStorage`.
 7. **The welcome screen informs once.** The welcome screen shows two short columns under the prerequisites: "Free, on your machine" and "Halv Cloud". The block has no button. The one call to action stays "Let's try it on my project".
 8. **Usage events are opt-in.** `AppPreferences.analyticsConsent` has three values: `unset`, `on` and `off`. The app sends no event while the value is `unset` or `off`. A new install starts as `unset`.
-9. **The consent card is plain.** The card has the title "Help improve Halv", one sentence, and a "What is sent" list. The list shows the 13 journey events in four groups. The list also shows the facts that travel with each event, and what Halv never sends. The two answer buttons look the same.
-10. **The same list lives in Settings.** Settings, Privacy shows the same list as the consent card. The user can change the answer at any time.
+9. **The consent card is plain.** The card has the title "Help improve Halv", one sentence, and a "What is sent" list. The list shows the 13 journey events in four groups. The list also shows the facts that travel with each event, and what Halv never sends. The two answer buttons look the same. ADR 0022 amends this decision: the list grows to 18 events.
+10. **The same list lives in Settings.** Settings, Privacy shows the same list as the consent card. The user can change the answer at any time. ADR 0022 amends this decision: Settings shows the list of version 2.
 11. **Upgraded installs ask once.** An install that upgraded from the old default (analytics on, never asked) becomes `unset`. It sends no event until the user answers. On the first launch after the upgrade, the app shows one banner at the top of the main column: "Halv now asks before it sends usage events." The banner disappears when the user answers. Later launches do not show the banner again. The answer then stays `unset`, and Settings, Privacy keeps the toggle.
 12. **Download attribution uses a deep link.** After the download starts, the site opens `halv://welcome?d=<download_id>`. The app stores the id when it arrives before the first launch or shortly after it. The app sends the id in the `first_open` event as `download_id`. The id is opaque, has at most 64 characters, and uses only `[A-Za-z0-9_-]`. The app drops any other value.
 13. **The id is stored without consent, and sent only with consent.** Without consent the app sends nothing. The app still stores the id. If the user consents later, the app sends the stored id with `first_open`.
