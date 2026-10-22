@@ -1,7 +1,6 @@
 import { ipc } from "../ipc.ts";
 import { useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   appendImageFiles,
   imageAttachmentDataUrl,
@@ -25,6 +24,7 @@ import {
   insertDroppedFileMentions,
   partitionDroppedPaths,
 } from "../composerDrop";
+import { nativeDropPoint } from "../nativeDropPoint";
 import { terminalDropBridge } from "../terminalDrop";
 import {
   eligibleCredentialProfiles,
@@ -788,53 +788,49 @@ export function ChatComposer({
     let unlisten: (() => void) | undefined;
     let nativeDragHasImages = false;
     try {
-      void getCurrentWindow()
-        .scaleFactor()
-        .catch(() => window.devicePixelRatio || 1)
-        .then((scaleFactor) =>
-          getCurrentWebview().onDragDropEvent((event) => {
-            const payload = event.payload;
-            if (payload.type === "leave") {
-              nativeDragHasImages = false;
-              setDraggingImages(false);
-              return;
-            }
+      void getCurrentWebview()
+        .onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "leave") {
+            nativeDragHasImages = false;
+            setDraggingImages(false);
+            return;
+          }
 
-            const dropZone = composerDropZoneRef.current;
-            const position = payload.position.toLogical(scaleFactor);
-            const bounds = dropZone?.getBoundingClientRect();
-            const inside = Boolean(
-              bounds &&
-                position.x >= bounds.left &&
-                position.x <= bounds.right &&
-                position.y >= bounds.top &&
-                position.y <= bounds.bottom,
-            );
+          const dropZone = composerDropZoneRef.current;
+          const position = nativeDropPoint(payload.position);
+          const bounds = dropZone?.getBoundingClientRect();
+          const inside = Boolean(
+            bounds &&
+              position.x >= bounds.left &&
+              position.x <= bounds.right &&
+              position.y >= bounds.top &&
+              position.y <= bounds.bottom,
+          );
 
-            // A terminal pane under the pointer takes the drop instead.
-            const overTerminal =
-              !inside && terminalDropBridge.targetAt(position.x, position.y) !== null;
+          // A terminal pane under the pointer takes the drop instead.
+          const overTerminal =
+            !inside && terminalDropBridge.targetAt(position.x, position.y) !== null;
 
-            if (payload.type === "enter") {
-              nativeDragHasImages =
-                partitionDroppedPaths(payload.paths).imagePaths.length > 0;
-              setDraggingImages(nativeDragHasImages && !overTerminal);
-              return;
-            }
-            if (payload.type === "drop") {
-              const acceptedPaths = overTerminal
-                ? []
-                : acceptedNativeDropPaths(payload.paths, inside);
-              nativeDragHasImages = false;
-              setDraggingImages(false);
-              if (acceptedPaths.length > 0) {
-                nativePathDropRef.current(acceptedPaths);
-              }
-              return;
-            }
+          if (payload.type === "enter") {
+            nativeDragHasImages =
+              partitionDroppedPaths(payload.paths).imagePaths.length > 0;
             setDraggingImages(nativeDragHasImages && !overTerminal);
-          }),
-        )
+            return;
+          }
+          if (payload.type === "drop") {
+            const acceptedPaths = overTerminal
+              ? []
+              : acceptedNativeDropPaths(payload.paths, inside);
+            nativeDragHasImages = false;
+            setDraggingImages(false);
+            if (acceptedPaths.length > 0) {
+              nativePathDropRef.current(acceptedPaths);
+            }
+            return;
+          }
+          setDraggingImages(nativeDragHasImages && !overTerminal);
+        })
         .then((stopListening) => {
           if (disposed) {
             stopListening();
