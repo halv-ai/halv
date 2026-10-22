@@ -264,3 +264,39 @@ quit it first, so that it registers the scheme.
    back and that no second Halv process starts.
 5. Set usage events to on. Make sure that the newest `first_open` row on the
    server has `download_id` with the value `test_123`.
+
+### Analytics v2 (ADR 0022)
+
+Check that Halv sends the data in the "What is sent" list and no other data.
+Do these checks on the release installer. Use a machine that has no Halv dev build.
+
+#### Prepare traffic capture
+
+1. Start a traffic recorder, for example `mitmproxy`. Or use the server log of `api.halv.ai`.
+2. Send the traffic of Halv through the recorder.
+3. Delete the app data directory of Halv.
+
+#### Test A: list and traffic
+
+1. Start Halv. Answer "Yes" to the usage events question.
+2. Use Halv for one day. Use at least one agent session.
+3. Compare the traffic with the "What is sent" list in Settings, Privacy. Make sure each event, field and value in the traffic is in the list.
+4. Make sure Halv sends analytics only to `api.halv.ai`. Make sure Halv sends nothing to PostHog.
+5. Make sure `tokens_saved` and `usd_saved` have at most 2 significant digits.
+6. Make sure the sum of the `usd_saved` values matches the local savings meter. A rounding difference of 5 percent for each value is normal.
+
+#### Test B: version 1 install
+
+1. Install the previous release. Answer "Yes" to the usage events question. Quit Halv.
+2. Start the release candidate over the previous release. Do not answer the notice.
+3. Use Halv. Make sure the traffic has no version 2 event: `usage_summarized`, `crash_detected`, `proxy_failed`, `app_updated`, `update_failed`.
+4. Make sure the traffic has no `locale`, no `consent_version` 2, no `agent_kind`, no `auth_method` and no `surface`.
+5. Answer "No" to the notice. Make sure the traffic stays the same as in steps 3 and 4.
+
+#### Test C: notice shows once
+
+1. Repeat Test B steps 1 and 2.
+2. Make sure the banner "Halv now also sends a daily usage summary" shows. Make sure it does not block work.
+3. Quit Halv without an answer. Start Halv. Make sure the banner shows again.
+4. Answer "Yes". Quit Halv. Start Halv. Make sure the banner does not show again.
+5. Make sure the traffic now has `consent_version` 2 and `locale`.
