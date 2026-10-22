@@ -316,9 +316,10 @@ time zone of the machine to UTC, so that both use the same day.
 6. Compare `usd_saved` with the savings meter for day D only. Use the daily
    chart in the savings panel. Do not use the all-time value, because it
    also counts later days. A rounding difference of 5 percent is normal.
-7. Make sure Halv sends analytics only to `api.halv.ai`. Use a network
-   monitor that lists host names, for example Little Snitch. Make sure no
-   connection goes to a PostHog host.
+7. Make sure no connection from Halv goes to a PostHog host. Use a
+   network monitor that lists host names, for example Little Snitch. In
+   this test, Halv sends analytics to the recorder on loopback. The
+   recorder sends them on to `api.halv.ai`.
 
 #### Test B: version 1 install
 
