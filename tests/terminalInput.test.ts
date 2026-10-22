@@ -68,3 +68,83 @@ test("the stream sends terminal_write with the writer and the sequence", async (
   assert.equal(args.sequence, 1);
   assert.equal(typeof args.writer, "string");
 });
+
+function settleCalls(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+test("a pane has one terminal_write call in flight at a time", async () => {
+  const calls: Array<{ args: WriteArgs; settle: () => void }> = [];
+  const write = createTerminalInputStream("session-1", (args) =>
+    new Promise<void>((resolve) => {
+      calls.push({ args, settle: resolve });
+    }),
+  );
+
+  const first = write("a");
+  const second = write("b");
+  await settleCalls();
+  assert.deepEqual(calls.map(({ args }) => args.data), ["a"]);
+
+  calls[0].settle();
+  await first;
+  await settleCalls();
+  assert.deepEqual(
+    calls.map(({ args }) => [args.data, args.sequence]),
+    [
+      ["a", 1],
+      ["b", 2],
+    ],
+  );
+  calls[1].settle();
+  await second;
+});
+
+test("a failed write fails only its caller and the next write still goes out", async () => {
+  const sent: string[] = [];
+  const write = createTerminalInputStream("session-1", async (args) => {
+    sent.push(args.data);
+    if (args.data === "a") throw new Error("terminal session is not running");
+  });
+
+  const first = write("a");
+  const second = write("b");
+  await assert.rejects(first, /terminal session is not running/);
+  await second;
+  assert.deepEqual(sent, ["a", "b"]);
+});
+
+test("a call that never settles holds the next write only until the watchdog", async () => {
+  const sent: WriteArgs[] = [];
+  let settleFirst = () => {};
+  const write = createTerminalInputStream(
+    "session-1",
+    (args) => {
+      sent.push(args);
+      if (args.sequence !== 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        settleFirst = resolve;
+      });
+    },
+    20,
+  );
+
+  const first = write("a");
+  const second = write("b");
+  await settleCalls();
+  assert.equal(sent.length, 1);
+  await second;
+
+  // The first call settles late. It does not send a write a second time.
+  settleFirst();
+  await first;
+  await write("c");
+  assert.deepEqual(
+    sent.map(({ data, sequence }) => [data, sequence]),
+    [
+      ["a", 1],
+      ["b", 2],
+      ["c", 3],
+    ],
+  );
+});
