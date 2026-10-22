@@ -736,11 +736,44 @@ pub fn listen_for_download_links(app: &AppHandle) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
     let deep_link = app.deep_link();
+    if needs_runtime_scheme_registration(
+        std::env::consts::OS,
+        runs_as_appimage(app),
+        cfg!(debug_assertions),
+    ) {
+        if let Err(error) = deep_link.register_all() {
+            log_failure(&format!(
+                "Halv could not register the halv:// link: {error}"
+            ));
+        }
+    }
     if let Ok(Some(urls)) = deep_link.get_current() {
         accept_download_links(app, &urls);
     }
     let handle = app.clone();
     deep_link.on_open_url(move |event| accept_download_links(&handle, &event.urls()));
+}
+
+/// Tells if Halv must register the halv:// scheme when it starts. The MSI,
+/// NSIS, deb and rpm installers register it from `tauri.conf.json`. An
+/// AppImage and a dev build have no installer. macOS registers the scheme
+/// from the app bundle and cannot register it at runtime.
+fn needs_runtime_scheme_registration(os: &str, appimage: bool, debug_build: bool) -> bool {
+    match os {
+        "linux" => appimage || debug_build,
+        "windows" => debug_build,
+        _ => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn runs_as_appimage(app: &AppHandle) -> bool {
+    app.env().appimage.is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn runs_as_appimage(_app: &AppHandle) -> bool {
+    false
 }
 
 fn accept_download_links(app: &AppHandle, urls: &[url::Url]) {
@@ -1112,6 +1145,17 @@ mod tests {
         for value in rejected {
             assert_eq!(download_id_from_url(&link(value)), None, "{value}");
         }
+    }
+
+    #[test]
+    fn only_installs_without_an_installer_register_the_link_scheme() {
+        assert!(needs_runtime_scheme_registration("linux", true, false));
+        assert!(needs_runtime_scheme_registration("linux", false, true));
+        assert!(needs_runtime_scheme_registration("windows", false, true));
+        assert!(!needs_runtime_scheme_registration("linux", false, false));
+        assert!(!needs_runtime_scheme_registration("windows", false, false));
+        assert!(!needs_runtime_scheme_registration("macos", false, true));
+        assert!(!needs_runtime_scheme_registration("macos", false, false));
     }
 
     #[test]

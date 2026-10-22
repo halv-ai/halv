@@ -190,3 +190,34 @@ To update the fork coupled to Halv:
 For signed macOS releases, Halv signs every Mach-O file in the frozen onedir
 tree before Tauri seals the app bundle, then CI verifies the finished `.app`
 recursively with `codesign --deep --strict`.
+
+## 7. Release QA checklist
+
+Do these manual checks on the release installers before you publish them.
+
+### Download link (`halv://`)
+
+The site opens `halv://welcome?d=<download_id>` after a download starts
+(ADR 0021). Test the link on macOS, Windows (in the VM), and Linux.
+
+1. Install Halv from the release installer. On Linux, test the AppImage and
+   one of the DEB or RPM packages. An AppImage registers the scheme only
+   when it starts, so for the AppImage do step 5 only.
+2. Before the first open, open the link:
+   - macOS: `open "halv://welcome?d=test_123"`
+   - Windows: `start "" "halv://welcome?d=test_123"`
+   - Linux: `xdg-open "halv://welcome?d=test_123"`
+3. Make sure that Halv starts and that Settings > Privacy shows `test_123`.
+4. Set usage events to on. Make sure that the `first_open` event sends
+   `download_id` with the value `test_123`.
+5. Do the test again on a clean install, with Halv already open:
+   1. Open Halv. Do not set usage events to on yet.
+   2. Close the main window, so that Halv runs only in the tray.
+   3. Open the link.
+   4. Make sure that Settings > Privacy shows `test_123`. On Windows and
+      Linux, also make sure that the main window comes back and that no
+      second Halv process starts.
+   5. Set usage events to on. Make sure that `first_open` sends
+      `download_id` with the value `test_123`.
+6. Open `halv://welcome?d=bad.id`. Make sure that Halv ignores it and shows
+   no error.

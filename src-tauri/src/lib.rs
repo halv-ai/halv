@@ -55,7 +55,19 @@ use tauri::Manager;
 pub fn run() {
     let sidecar_manager = sidecar::SidecarManager::new(sidecar::random_default_port());
 
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // On Windows and Linux a halv:// link starts a second Halv process. This
+    // plugin gives the link to the running app, shows its window and stops
+    // the second process (ADR 0021). It must be the first plugin.
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Err(error) = tray::show_main_window(app) {
+            eprintln!("failed to show Halv window: {error}");
+        }
+    }));
+
+    let builder = builder
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

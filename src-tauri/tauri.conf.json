@@ -33,6 +33,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["halv"]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/pedr0v/halv-releases/releases/latest/download/latest.json"

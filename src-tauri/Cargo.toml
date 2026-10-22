@@ -67,6 +67,12 @@ notify-rust = "4"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 
+# Sends a halv:// link from a second launch to the running app (ADR 0021).
+# macOS gives links to the running app without it. The 2.4 line keeps
+# tauri 2.11 and tauri-plugin-deep-link 2.4.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "~2.4.5", features = ["deep-link"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
