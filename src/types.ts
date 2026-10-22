@@ -219,6 +219,12 @@ export type StatusState = {
 /** The answer to the usage events question. `unset` sends nothing (ADR 0021). */
 export type AnalyticsConsent = "unset" | "on" | "off";
 
+/** The list version of usage events that an "on" answer covers (ADR 0022). */
+export type AnalyticsConsentVersion = 1 | 2;
+
+/** The newest list version that Halv asked about. `0` means never asked. */
+export type AnalyticsConsentAsked = 0 | 1 | 2;
+
 /** The download id of the site link that led to this install (ADR 0021). */
 export type AnalyticsAttribution = { downloadId: string | null };
 
@@ -234,6 +240,13 @@ export type AppPreferences = {
   memoriesEnabled: boolean;
   /** Halv sends usage events only for `on` (ADR 0021). */
   analyticsConsent: AnalyticsConsent;
+  /**
+   * The list version that the `on` answer covers (ADR 0022). Version 1
+   * sends the 13 journey events only.
+   */
+  analyticsConsentVersion: AnalyticsConsentVersion;
+  /** The newest list version that Halv asked about (ADR 0022). */
+  analyticsConsentAsked: AnalyticsConsentAsked;
   /** Always `analyticsConsent === "on"`. Use `analyticsConsent` in new code. */
   analyticsEnabled: boolean;
   defaultModel: string | null;

@@ -71,6 +71,32 @@ export function shouldShowConsentBanner({
   );
 }
 
+// The notice of list version 2 asks an install that said "on" to the
+// version 1 list (ADR 0022). It shows while the newest list that Halv asked
+// about is below 2. It shows again on each launch until the user answers,
+// so it stores no "shown" flag. It hides where the consent banner hides, so
+// the app never shows two asks at once. `asked` is `null` while the saved
+// preference loads.
+export function shouldShowConsentNotice({
+  consent,
+  asked,
+  welcomeScreenShown,
+  firstTaskShown,
+}: {
+  consent: ConsentAnswer | null | undefined;
+  asked: number | null | undefined;
+  welcomeScreenShown: boolean;
+  firstTaskShown: boolean;
+}) {
+  return (
+    consent === "on" &&
+    typeof asked === "number" &&
+    asked < 2 &&
+    !welcomeScreenShown &&
+    !firstTaskShown
+  );
+}
+
 export const CONSENT_BANNER_SHOWN_STORAGE_KEY = "halv.consentBannerShown";
 
 export function readConsentBannerShown(

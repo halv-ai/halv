@@ -20,6 +20,7 @@ import {
   readWelcomeSeen,
   shouldAskConsent,
   shouldShowConsentBanner,
+  shouldShowConsentNotice,
   shouldShowWelcomeScreen,
   writeCloudInfoSeen,
   writeConsentBannerShown,
@@ -385,6 +386,31 @@ test("the consent banner shows on one launch only, and the answer stays unset", 
   );
   // The answer stays unset, so Halv still sends nothing.
   assert.equal(shouldAskConsent({ consent: "unset", welcomeSeen: true }), true);
+});
+
+test("the list version 2 notice asks a version 1 yes until the user answers", () => {
+  const main = { welcomeScreenShown: false, firstTaskShown: false };
+  // A yes from before version 2 was asked about version 1 only.
+  assert.equal(shouldShowConsentNotice({ consent: "on", asked: 1, ...main }), true);
+  assert.equal(shouldShowConsentNotice({ consent: "on", asked: 0, ...main }), true);
+  // Each answer to the notice, the ask card or Settings sets asked to 2.
+  assert.equal(shouldShowConsentNotice({ consent: "on", asked: 2, ...main }), false);
+  // No yes: nothing to extend. The consent banner asks an unset answer.
+  assert.equal(shouldShowConsentNotice({ consent: "off", asked: 1, ...main }), false);
+  assert.equal(shouldShowConsentNotice({ consent: "unset", asked: 0, ...main }), false);
+  // The saved preference has not loaded yet.
+  assert.equal(shouldShowConsentNotice({ consent: null, asked: null, ...main }), false);
+  assert.equal(shouldShowConsentNotice({ consent: "on", asked: null, ...main }), false);
+  assert.equal(shouldShowConsentNotice({ consent: undefined, asked: undefined, ...main }), false);
+  // It hides where the consent banner hides, so the app never shows two asks.
+  assert.equal(
+    shouldShowConsentNotice({ consent: "on", asked: 1, welcomeScreenShown: true, firstTaskShown: false }),
+    false,
+  );
+  assert.equal(
+    shouldShowConsentNotice({ consent: "on", asked: 1, welcomeScreenShown: false, firstTaskShown: true }),
+    false,
+  );
 });
 
 test("the Halv Cloud information block shows once", () => {

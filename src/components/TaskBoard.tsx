@@ -178,6 +178,7 @@ export function TaskBoard({
           onSignIn={onSignIn}
           onStatusChange={onAccountStatusChange}
           placement="inline"
+          surface="task_board"
         />
       </aside>
     ) : null;

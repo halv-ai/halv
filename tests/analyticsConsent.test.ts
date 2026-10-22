@@ -5,14 +5,17 @@ import ReactDOMServer from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 
 // @ts-expect-error Node's test runner needs the source extension.
-import { ANALYTICS_EVENTS } from "../src/analytics.ts";
+import { ANALYTICS_EVENTS, ANALYTICS_V2_EVENTS } from "../src/analytics.ts";
 
 // Node strips types but does not compile JSX. Vite loads the component the
 // way the app does, and React stays the copy that this test imports.
 type ConsentModule = typeof import("../src/components/AnonymousUsagePreference.tsx");
+type IpcModule = typeof import("../src/ipc.ts");
 
 let server: ViteDevServer;
 let consent: ConsentModule;
+// The copy of src/ipc.ts that the consent module uses.
+let consentIpc: IpcModule;
 
 before(async () => {
   server = await createServer({
@@ -25,6 +28,7 @@ before(async () => {
   consent = (await server.ssrLoadModule(
     "/src/components/AnonymousUsagePreference.tsx",
   )) as ConsentModule;
+  consentIpc = (await server.ssrLoadModule("/src/ipc.ts")) as IpcModule;
 });
 
 after(async () => {
@@ -38,6 +42,9 @@ const NEVER_SENT = [
   "Terminal output",
   "Account emails",
   "API keys",
+  "Exact savings in usage events",
+  "Crash stack traces",
+  "Your IP address (the Halv server does not pass it on)",
 ];
 
 const SENT_WITH_EVENTS = [
@@ -46,7 +53,11 @@ const SENT_WITH_EVENTS = [
   "Your operating system",
   "The time of the event",
   "The download ID, if you came through a link on the Halv site",
+  "The app language",
 ];
+
+// List version 2 shows the 13 journey events and the 5 new events (ADR 0022).
+const LISTED_EVENTS = [...ANALYTICS_EVENTS, ...ANALYTICS_V2_EVENTS];
 
 function render(element: React.ReactElement) {
   return ReactDOMServer.renderToStaticMarkup(element);
@@ -68,9 +79,10 @@ test("the journey has 13 events", () => {
   assert.equal(ANALYTICS_EVENTS.length, 13);
 });
 
-test("both variants list the 13 journey events", () => {
+test("both variants list the 18 events of list version 2", () => {
+  assert.equal(LISTED_EVENTS.length, 18);
   for (const [variant, html] of Object.entries(surfaces())) {
-    for (const event of ANALYTICS_EVENTS) {
+    for (const event of LISTED_EVENTS) {
       assert.ok(
         html.includes(`>${event}</code>`),
         `${variant} lists ${event}`,
@@ -78,7 +90,7 @@ test("both variants list the 13 journey events", () => {
     }
     assert.equal(
       (html.match(/<code /g) ?? []).length,
-      ANALYTICS_EVENTS.length,
+      LISTED_EVENTS.length,
       `${variant} lists each event once`,
     );
   }
@@ -102,10 +114,30 @@ test("both variants list the facts that travel with each event", () => {
   }
 });
 
-test("the events appear in the four groups of the disclosure", () => {
+test("the events appear in the six groups of the disclosure", () => {
   const { ask } = surfaces();
-  for (const group of ["Setup", "First task", "Halv Cloud", "Activity"]) {
+  const groups = [
+    "Setup",
+    "First task",
+    "Halv Cloud",
+    "Activity",
+    "Daily usage summary",
+    "App health",
+  ];
+  for (const group of groups) {
     assert.ok(ask.includes(`>${group}</p>`), group);
+  }
+  const summary = ask.indexOf(">Daily usage summary</p>");
+  const health = ask.indexOf(">App health</p>");
+  const at = (event: string) => ask.indexOf(`>${event}</code>`);
+  assert.ok(at("usage_summarized") > summary && at("usage_summarized") < health);
+  for (const event of [
+    "crash_detected",
+    "proxy_failed",
+    "app_updated",
+    "update_failed",
+  ]) {
+    assert.ok(at(event) > health, `${event} sits in App health`);
   }
   const setup = ask.indexOf(">Setup</p>");
   const firstTask = ask.indexOf(">First task</p>");
@@ -203,4 +235,111 @@ test("the banner shows one line and two buttons only while unset", () => {
 
 test("the connected banner renders nothing before the answer loads", () => {
   assert.equal(render(React.createElement(consent.ConsentAskBanner)), "");
+});
+
+test("each version 2 event and fact has plain words", () => {
+  const { ask } = surfaces();
+  const facts = [
+    // account_connected and trial_prompted
+    "The agent and how you signed in (app, API key, or CLI)",
+    "Where it showed",
+    // usage_summarized
+    "The agents you used",
+    "The number of agent sessions, as a range",
+    "Tokens and dollars saved, rounded to 2 significant digits",
+    "Whether crux and task routing were used",
+    "Your Halv Cloud plan",
+    // crash_detected
+    "The version of that run",
+    "How long it ran and its memory use, as ranges",
+    // proxy_failed
+    "What failed (start, stop, or too many restarts)",
+    "Whether an automatic restart fixed it",
+    // app_updated and update_failed
+    "The version before the update",
+    "The step that failed (download, signature check, or install)",
+  ];
+  for (const fact of facts) {
+    assert.ok(ask.includes(`<li>${fact}</li>`), fact);
+  }
+});
+
+function noticeView(
+  answer: "unset" | "on" | "off" | null,
+  asked: 0 | 1 | 2 | null,
+) {
+  return render(
+    React.createElement(consent.ConsentCardView, {
+      onAnswer: () => undefined,
+      onListVersion: () => undefined,
+      onRetry: () => undefined,
+      preference: {
+        consent: answer,
+        enabled: answer === null ? null : answer === "on",
+        version: answer === "on" ? 1 : null,
+        asked,
+        error: null,
+        pending: false,
+      },
+      variant: "notice",
+    }),
+  );
+}
+
+test("the version 2 notice asks a version 1 yes with two equal buttons", () => {
+  const html = noticeView("on", 1);
+  assert.ok(html.includes("Halv now also sends a daily usage summary"));
+  assert.ok(html.includes(">Share the summary too</button>"));
+  assert.ok(html.includes(">Keep the current list</button>"));
+  assert.equal((html.match(/class="consent-choice"/g) ?? []).length, 2);
+  // It is a banner in the page, not a dialog.
+  assert.ok(html.startsWith("<aside"));
+  assert.ok(!html.includes('role="dialog"'));
+  assert.ok(!html.includes("aria-modal"));
+  assert.ok(html.includes(">usage_summarized</code>"));
+  for (const [answer, asked] of [
+    ["on", 2],
+    ["off", 1],
+    ["unset", 0],
+    [null, null],
+    ["on", null],
+  ] as const) {
+    assert.equal(noticeView(answer, asked), "", `no notice for ${answer}/${asked}`);
+  }
+});
+
+test("the notice answers keep yes and save the list version", async () => {
+  const calls: unknown[] = [];
+  consentIpc.setIpcTransport({
+    invoke: async (name: string, args: unknown) => {
+      calls.push([name, args]);
+      const version =
+        (args as { consentVersion?: number } | undefined)?.consentVersion ?? 2;
+      return {
+        analyticsConsent: (args as { consent?: string } | undefined)?.consent ?? "on",
+        analyticsConsentVersion: version,
+        analyticsConsentAsked: 2,
+      } as never;
+    },
+    listen: async () => () => undefined,
+  });
+  try {
+    await consent.answerConsentNotice(2);
+    await consent.answerConsentNotice(1);
+    await consent.answerConsent("on");
+    await consent.answerConsent("off");
+    assert.deepEqual(calls, [
+      ["preferences_set_analytics_consent", { consent: "on", consentVersion: 2 }],
+      ["preferences_set_analytics_consent", { consent: "on", consentVersion: 1 }],
+      ["preferences_set_analytics_consent", { consent: "on" }],
+      ["preferences_set_analytics_consent", { consent: "off" }],
+    ]);
+  } finally {
+    consentIpc.setIpcTransport(consentIpc.tauriTransport);
+  }
+});
+
+test("the connected notice renders nothing without a version 1 yes", () => {
+  // The answers above left "off" in the shared store.
+  assert.equal(render(React.createElement(consent.ConsentNoticeBanner)), "");
 });

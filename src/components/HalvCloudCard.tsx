@@ -8,7 +8,11 @@
 // - "pitch": once after the first result, at the top of the chat column.
 // - "inline": at the point of use, under the switch of a Halv Cloud feature.
 import { useEffect, useId, useState } from "react";
-import { recordAnalyticsEvent } from "../analytics";
+import {
+  recordAnalyticsEvent,
+  recordTrialPrompted,
+  type AnalyticsTrialSurface,
+} from "../analytics";
 import { billingPortal } from "../billing";
 import { formatPrice } from "../billingCurrency";
 import type { CloudAccess } from "../halvCloud.ts";
@@ -24,6 +28,11 @@ type HalvCloudCardProps = {
   placement: "pitch" | "inline";
   /** The feature at the point of use. Only the "inline" placement uses it. */
   feature?: HalvCloudFeature;
+  /**
+   * The `surface` of `trial_prompted` (ADR 0022). The default is the
+   * feature. Without a feature and a surface, the event has no surface.
+   */
+  surface?: AnalyticsTrialSurface;
   account: AccountAuthStatus | null;
   access: CloudAccess;
   /** The result line of the first task. Only the "pitch" placement uses it. */
@@ -44,6 +53,7 @@ const TRIAL_INTERVAL = "month";
 export function HalvCloudCard({
   placement,
   feature,
+  surface,
   account,
   access,
   payoff,
@@ -73,11 +83,12 @@ export function HalvCloudCard({
 
   // The pitch records `trial_prompted` in App. The point-of-use cards record
   // it here. Native storage keeps one event for each install.
+  const trialSurface = surface ?? feature;
   useEffect(() => {
     if (placement === "inline" && !access.granted) {
-      void recordAnalyticsEvent("trial_prompted");
+      void recordTrialPrompted(trialSurface);
     }
-  }, [access.granted, placement]);
+  }, [access.granted, placement, trialSurface]);
 
   if (access.granted) {
     return null;

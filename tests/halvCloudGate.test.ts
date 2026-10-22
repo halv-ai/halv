@@ -245,7 +245,7 @@ test("App shows one pitch card, and checkout or dismissal hides it for good", ()
   assert.match(pitches[0], /onCheckoutOpened=\{\(\) => writeCloudPitchDismissed\(\)\}/);
   assert.match(
     app,
-    /if \(!showCloudPitch\) return;\s*writeCloudPitchShown\(\);\s*void recordAnalyticsEvent\("trial_prompted"\)/,
+    /if \(!showCloudPitch\) return;\s*writeCloudPitchShown\(\);\s*void recordTrialPrompted\("pitch"\)/,
   );
   const card = source("../src/components/HalvCloudCard.tsx");
   assert.match(card, /recordAnalyticsEvent\("checkout_opened"\)/);

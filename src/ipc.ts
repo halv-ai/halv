@@ -8,6 +8,7 @@ import type {
   AgentMemory,
   AnalyticsAttribution,
   AnalyticsConsent,
+  AnalyticsConsentVersion,
   AnthropicCredentialStatus,
   AppPreferences,
   AppUpdateRestartBlockers,
@@ -179,7 +180,14 @@ export type AccountPublishReceiptArgs = {
 export type AccountPublishReceiptResult = { id: string; url: string };
 export type RouteTaskArgs = { brief: string };
 
-export type AnalyticsRecordArgs = { event: AnalyticsEvent; category?: import("./analytics").AnalyticsFailure };
+export type AnalyticsRecordArgs = {
+  event: AnalyticsEvent;
+  category?: import("./analytics").AnalyticsFailure;
+  /** The facts of list version 2 (ADR 0022), with snake_case keys. */
+  props?: import("./analytics").AnalyticsProps;
+};
+/** The UI language. Native code sends it only under list version 2. */
+export type AnalyticsLocaleArgs = { locale: import("./i18n/config").Locale };
 
 export type AutomationIdArgs = { automationId: string };
 export type AutomationRunArgs = { automationId: string; runId: string };
@@ -368,8 +376,15 @@ export type KeyboardShortcutsArgs = {
   shortcuts: Record<string, string>;
 };
 export type AnalyticsEnabledArgs = { analyticsEnabled: boolean };
-/** `unset` is not an answer, so the command accepts only `on` and `off`. */
-export type AnalyticsConsentArgs = { consent: Exclude<AnalyticsConsent, "unset"> };
+/**
+ * `unset` is not an answer, so the command accepts only `on` and `off`.
+ * `consentVersion` is the list version that "on" covers. Without it, "on"
+ * covers version 2. "off" keeps the saved version (ADR 0022).
+ */
+export type AnalyticsConsentArgs = {
+  consent: Exclude<AnalyticsConsent, "unset">;
+  consentVersion?: AnalyticsConsentVersion;
+};
 export type MemoriesEnabledArgs = { memoriesEnabled: boolean };
 export type TaskRoutingArgs = { taskRouting: boolean };
 export type WorkflowRoutingArgs = { workflowRouting: boolean };
@@ -667,6 +682,7 @@ export interface IpcContract {
   analytics_flush: { args: undefined; result: void };
   analytics_install_id: { args: undefined; result: string };
   analytics_record: { args: AnalyticsRecordArgs; result: void };
+  analytics_set_locale: { args: AnalyticsLocaleArgs; result: void };
   app_open_external_url: { args: OpenExternalUrlArgs; result: void };
   app_open_path: { args: AppPathArgs; result: void };
   app_reveal_path: { args: AppPathArgs; result: void };
@@ -989,6 +1005,7 @@ export const commandNames = [
   "analytics_flush",
   "analytics_install_id",
   "analytics_record",
+  "analytics_set_locale",
   "app_open_external_url",
   "app_open_path",
   "app_reveal_path",

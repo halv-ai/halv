@@ -86,6 +86,7 @@ import { LifetimeOffer } from "./LifetimeOffer";
 import {
   AnonymousUsagePreference,
   ConsentDetails,
+  ConsentRecord,
 } from "./AnonymousUsagePreference";
 import { HalvCloudCard } from "./HalvCloudCard";
 
@@ -2912,6 +2913,7 @@ export function SettingsPanel({
                       {installId ?? t("Unavailable")}
                     </code>
                   </p>
+                  <ConsentRecord />
                 </ConsentDetails>
               </div>
               <details className="mt-2 text-xs text-content-muted">

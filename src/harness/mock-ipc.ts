@@ -1,6 +1,8 @@
 import type {
   AgentMemory,
   AnalyticsConsent,
+  AnalyticsConsentAsked,
+  AnalyticsConsentVersion,
   AppPreferences,
   AppUpdateSnapshot,
   BillingPrices,
@@ -695,6 +697,8 @@ export class FixtureTransport implements Transport {
     claudeSubscriptionProxy: true,
     memoriesEnabled: true,
     analyticsConsent: "on",
+    analyticsConsentVersion: 2,
+    analyticsConsentAsked: 2,
     analyticsEnabled: true,
     defaultModel: null,
     defaultEffort: null,
@@ -723,9 +727,15 @@ export class FixtureTransport implements Transport {
         ? null
         : new URLSearchParams(window.location.search);
     // A fresh install has no answer yet. ?consent= selects one for QA.
-    this.setAnalyticsConsent(
-      harnessAnalyticsConsent(state.scenario, search?.get("consent") ?? null),
+    // ?consent=notice is a version 1 "on" that the version 2 notice asks.
+    const consent = harnessAnalyticsConsent(
+      state.scenario,
+      search?.get("consent") ?? null,
     );
+    this.preferences.analyticsConsent = consent.consent;
+    this.preferences.analyticsEnabled = consent.consent === "on";
+    this.preferences.analyticsConsentVersion = consent.version;
+    this.preferences.analyticsConsentAsked = consent.asked;
     this.downloadId = harnessDownloadId(search?.get("download") ?? null);
     this.appUpdate = appUpdateHarnessSnapshot(state.fixture.update);
     // ?remote= selects a Settings > Mobile state for the visual harness.
@@ -1118,9 +1128,25 @@ export class FixtureTransport implements Transport {
     return id;
   }
 
-  private setAnalyticsConsent(consent: AnalyticsConsent) {
+  // The native rules of ADR 0022: "on" covers version 2 unless the call
+  // says 1, "off" keeps the version, and each answer asked about version 2.
+  private setAnalyticsConsent(
+    consent: Exclude<AnalyticsConsent, "unset">,
+    consentVersion?: unknown,
+  ) {
+    const version =
+      consentVersion === undefined
+        ? 2
+        : consentVersion === 1 || consentVersion === 2
+          ? consentVersion
+          : null;
+    if (version === null) {
+      throw new Error("Usage events list version must be 1 or 2");
+    }
     this.preferences.analyticsConsent = consent;
     this.preferences.analyticsEnabled = consent === "on";
+    if (consent === "on") this.preferences.analyticsConsentVersion = version;
+    this.preferences.analyticsConsentAsked = 2;
   }
 
   private runCallback(id: number, payload: unknown) {
@@ -1409,6 +1435,7 @@ export class FixtureTransport implements Transport {
       case "analytics_attribution_get":
         return { downloadId: this.downloadId };
       case "analytics_record":
+      case "analytics_set_locale":
       case "analytics_flush":
         return null;
 
@@ -1472,7 +1499,7 @@ export class FixtureTransport implements Transport {
         if (args.consent !== "on" && args.consent !== "off") {
           throw new Error("Usage events consent must be on or off");
         }
-        this.setAnalyticsConsent(args.consent);
+        this.setAnalyticsConsent(args.consent, args.consentVersion);
         return clone(this.preferences);
       case "preferences_set_conversation_defaults":
         this.preferences = {
@@ -4317,6 +4344,7 @@ export const fixtureCommandHandlers: Record<
   analytics_flush: routeFixtureCommand("analytics_flush"),
   analytics_install_id: routeFixtureCommand("analytics_install_id"),
   analytics_record: routeFixtureCommand("analytics_record"),
+  analytics_set_locale: routeFixtureCommand("analytics_set_locale"),
   app_open_external_url: routeFixtureCommand("app_open_external_url"),
   app_open_path: routeFixtureCommand("app_open_path"),
   app_reveal_path: routeFixtureCommand("app_reveal_path"),
@@ -4652,11 +4680,19 @@ const FIXTURE_DAY_MS = 24 * FIXTURE_HOUR_MS;
 function harnessAnalyticsConsent(
   scenario: HarnessFixtureState["scenario"],
   preset: string | null,
-): AnalyticsConsent {
-  if (preset === "unset" || preset === "on" || preset === "off") {
-    return preset;
-  }
-  return scenario === "fresh" ? "unset" : "on";
+): {
+  consent: AnalyticsConsent;
+  version: AnalyticsConsentVersion;
+  asked: AnalyticsConsentAsked;
+} {
+  if (preset === "notice") return { consent: "on", version: 1, asked: 1 };
+  const consent =
+    preset === "unset" || preset === "on" || preset === "off"
+      ? preset
+      : scenario === "fresh"
+        ? "unset"
+        : "on";
+  return { consent, version: 2, asked: consent === "unset" ? 0 : 2 };
 }
 
 function harnessDownloadId(preset: string | null): string | null {

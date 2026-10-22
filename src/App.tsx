@@ -3,6 +3,7 @@ import { stopTerminalSessionForTabClose } from "./terminalClose";
 import { terminalDraftBridge, TerminalDraftError } from "./terminalDraft";
 import {
   ConsentAskBanner,
+  ConsentNoticeBanner,
   useAnonymousUsagePreference,
 } from "./components/AnonymousUsagePreference";
 import { ipc, type UnlistenFn } from "./ipc.ts";
@@ -89,9 +90,13 @@ import {
 } from "./conversationMode";
 import { appUpdateStore } from "./appUpdateStore";
 import {
+  analyticsEventProps,
   analyticsEventsWithConsent,
+  analyticsSignIns,
   flushAnalytics,
   recordAnalyticsEvent,
+  recordTrialPrompted,
+  setAnalyticsLocale,
   type AnalyticsState,
 } from "./analytics";
 import { AutomationsPanel } from "./components/AutomationsPanel";
@@ -217,6 +222,7 @@ import {
   readConsentBannerShown,
   readOnboardingPreference,
   shouldShowConsentBanner,
+  shouldShowConsentNotice,
   shouldShowWelcomeScreen,
   writeCloudInfoSeen,
   writeConsentBannerShown,
@@ -360,7 +366,14 @@ import {
   writeLanguagePreference,
   type LanguagePreference,
 } from "./i18n/language";
-import { formatMoney, setActiveLocale, useT, type Translate } from "./i18n/runtime";
+import {
+  formatMoney,
+  getActiveLocale,
+  setActiveLocale,
+  subscribeActiveLocale,
+  useT,
+  type Translate,
+} from "./i18n/runtime";
 import { mergeStatus } from "./statusState";
 import {
   readAgentAccounts,
@@ -4583,6 +4596,14 @@ function App() {
     return () =>
       window.removeEventListener("languagechange", syncSystemLanguage);
   }, [languagePreference]);
+
+  // Native code keeps the UI language for list version 2 (ADR 0022). The
+  // effect above sets the first locale, so this one runs after it.
+  useEffect(() => {
+    const sendLocale = () => void setAnalyticsLocale(getActiveLocale());
+    sendLocale();
+    return subscribeActiveLocale(sendLocale);
+  }, []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 767px)");
@@ -10027,6 +10048,11 @@ function App() {
         accountConnected:
           Object.values(composerConnections).some(Boolean) ||
           hasProviderCredentials(status.auth, status.anthropic),
+        signIns: analyticsSignIns({
+          connections: composerConnections,
+          auth: status.auth,
+          anthropic: status.anthropic,
+        }),
         tokensSaved: todaySavings?.tokensSaved ?? 0,
         trialConfirmed: status.account?.entitlements?.trialConfirmed === true,
         paymentConfirmed: status.account?.entitlements?.paymentConfirmed === true,
@@ -10042,7 +10068,11 @@ function App() {
       );
       analyticsPreviousStateRef.current = state;
       for (const event of events) {
-        void recordAnalyticsEvent(event);
+        void recordAnalyticsEvent(
+          event,
+          undefined,
+          analyticsEventProps(event, nextState),
+        );
       }
     },
     [
@@ -10185,13 +10215,23 @@ function App() {
     firstTaskShown: showFirstRunCard || guidedTaskPhase === "prepared",
     shownOnEarlierLaunch: consentBannerShownOnEarlierLaunch,
   });
-  // The pitch waits until the first-task card and the consent banner close,
-  // so the chat column shows one card at a time. The consent banner shows
-  // on one launch only, so the pitch can show on a later launch.
+  // A version 1 "on" sees the notice of list version 2 on each launch until
+  // the user answers (ADR 0022). It hides where the consent banner hides.
+  const showConsentNotice = shouldShowConsentNotice({
+    consent: anonymousUsagePreference.consent,
+    asked: anonymousUsagePreference.asked,
+    welcomeScreenShown,
+    firstTaskShown: showFirstRunCard || guidedTaskPhase === "prepared",
+  });
+  // The pitch waits until the first-task card, the consent banner and the
+  // consent notice close, so the chat column shows one card at a time. The
+  // consent banner shows on one launch only, so the pitch can show on a
+  // later launch. The notice closes when the user answers it.
   const showCloudPitch =
     workspaceView === "chat" &&
     !guidedTaskStatusVisible &&
     !showConsentBanner &&
+    !showConsentNotice &&
     cloudPitchVisible({
       valueDelivered: anonymousValueDelivered,
       access: halvCloudAccess,
@@ -10208,7 +10248,7 @@ function App() {
   useEffect(() => {
     if (!showCloudPitch) return;
     writeCloudPitchShown();
-    void recordAnalyticsEvent("trial_prompted");
+    void recordTrialPrompted("pitch");
   }, [showCloudPitch]);
 
   useEffect(() => {
@@ -11205,6 +11245,7 @@ function App() {
         </header>
 
         {showConsentBanner ? <ConsentAskBanner /> : null}
+        {showConsentNotice ? <ConsentNoticeBanner /> : null}
 
         {showCloudPitch ? (
           <HalvCloudCard
