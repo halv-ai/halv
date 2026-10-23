@@ -15,7 +15,19 @@ permissions:
 env:
   RELEASE_REPOSITORY: pedr0v/halv-releases
   RELEASE_NOTES: |
-    ## Halv 1.0
+    ## What's new
+    - Attention queue: agents that wait for you and results that you did not see yet, oldest first, at the bottom of the sidebar. Cmd+Shift+U (Ctrl+Shift+U on Windows and Linux) opens the next one.
+    - Halv Engine, the context compression proxy, is now optional and off by default, also after this update. Agents connect directly to their provider. Turn it on in Settings when you want compression. Chat mode still starts it when you send a message.
+    - macOS notifications: Settings shows whether macOS allows Halv banners and can send a test notification. A finished agent no longer hides the banner of a failed one.
+    - The Dot pin is optional and off by default. Turn it on in Settings.
+    - Typed terminal input is never dropped. The "terminal input arrived too late" error is gone.
+    - On Retina displays, a file or image that you drag onto a terminal now pastes its path into that terminal.
+    - Routing savings show one estimate instead of a wide range.
+    - Windows and Linux: the download link from the Halv site now opens Halv.
+    - Opt-in usage events can add a daily usage summary. Halv asks again before it sends it.
+    - Update checks look in the public halv-ai/halv repository first.
+
+    ## 1.0
     - Halv is open source. The desktop app is under the Apache-2.0 license: https://github.com/halv-ai/halv
     - Everything that runs on your computer is free and needs no account: the proxy and its savings, RTK, crux, terminals, projects, agent status and the local savings meter. Halv never blocks chat or terminals.
     - Halv Cloud is the paid plan. It adds task routing to cheaper models, automatic account rotation and a synced savings dashboard. Paid, trial and lifetime accounts keep everything they had.
