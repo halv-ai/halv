@@ -40,6 +40,7 @@
     },
     "updater": {
       "endpoints": [
+        "https://github.com/halv-ai/halv/releases/latest/download/latest.json",
         "https://github.com/pedr0v/halv-releases/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNEOTY4OTI2N0Y2MjMwNDEKUldSQk1HSi9Kb21XUGZVYzkvUlZGTnZKdWwxcjlmQUM0OTQrVS9NeGU1MEJ4VjRxZllSUHRzUXgK"

@@ -1,10 +1,18 @@
 # Releasing Halv
 
-Halv uses Tauri v2 updater artifacts hosted on GitHub Releases. The updater endpoint is:
+Halv uses Tauri v2 updater artifacts hosted on GitHub Releases. Since 1.0.1,
+the updater tries two endpoints in this order:
 
 ```text
+https://github.com/halv-ai/halv/releases/latest/download/latest.json
 https://github.com/pedr0v/halv-releases/releases/latest/download/latest.json
 ```
+
+The updater skips an endpoint that returns an error status, such as 404, and
+tries the next one. Halv 1.0.0 and older know only the `pedr0v/halv-releases`
+endpoint. Releases publish to `halv-ai/halv` from 1.0.2. Keep `latest.json`
+current in `pedr0v/halv-releases` for every release, so that old installs still
+find updates. Never delete or archive that repository.
 
 ## 1. Generate updater signing keys
 

@@ -23,7 +23,11 @@ use tauri::{utils::config::BundleType, AppHandle, Emitter, Manager};
 pub(crate) const SNAPSHOT_EVENT: &str = "app_update://snapshot";
 pub(crate) const BEFORE_RESTART_EVENT: &str = "app_update://before-restart";
 
-const RELEASE_URL_PREFIX: &str = "https://github.com/pedr0v/halv-releases/releases/tag/v";
+/// Releases from 1.0.2 live in the public repository. Older releases stay in
+/// `pedr0v/halv-releases`.
+const RELEASE_URL_PREFIX: &str = "https://github.com/halv-ai/halv/releases/tag/v";
+const LEGACY_RELEASE_URL_PREFIX: &str = "https://github.com/pedr0v/halv-releases/releases/tag/v";
+const LAST_LEGACY_RELEASE: &str = "1.0.1";
 const UNSUPPORTED_MESSAGE: &str = "This build of Halv cannot install updates.";
 const NOT_READY_MESSAGE: &str = "No downloaded Halv update is ready to install.";
 const BUSY_MESSAGE: &str = "Halv is already downloading or installing an update.";
@@ -1189,7 +1193,12 @@ fn available_status(release: &ReleaseInfo) -> AppUpdateStatus {
 }
 
 fn release_url(version: &str) -> String {
-    format!("{RELEASE_URL_PREFIX}{version}")
+    let prefix = if version_is_newer(version, LAST_LEGACY_RELEASE) {
+        RELEASE_URL_PREFIX
+    } else {
+        LEGACY_RELEASE_URL_PREFIX
+    };
+    format!("{prefix}{version}")
 }
 
 // A restart request applies only to the staged update, so it ends here too.
@@ -2690,6 +2699,22 @@ mod tests {
         assert!(version_is_newer("0.10.0", "0.9.12"));
         assert!(!version_is_newer("0.8.0-beta.1", "0.8.0"));
         assert!(version_is_newer("nightly-2", "nightly-1"));
+    }
+
+    #[test]
+    fn release_notes_link_to_the_repository_that_holds_the_release() {
+        assert_eq!(
+            release_url("1.0.1"),
+            "https://github.com/pedr0v/halv-releases/releases/tag/v1.0.1"
+        );
+        assert_eq!(
+            release_url("1.0.2"),
+            "https://github.com/halv-ai/halv/releases/tag/v1.0.2"
+        );
+        assert_eq!(
+            release_url("1.1.0"),
+            "https://github.com/halv-ai/halv/releases/tag/v1.1.0"
+        );
     }
 
     #[test]
