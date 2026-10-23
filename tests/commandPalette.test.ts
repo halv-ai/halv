@@ -115,6 +115,32 @@ test("command registry opens a shell without a keyboard binding", () => {
   );
 });
 
+test("restart-proxy never starts Halv Engine while the switch is off", () => {
+  const source = readFileSync(
+    new URL("../src/commands.ts", import.meta.url),
+    "utf8",
+  );
+  const entry = source.match(
+    /\{\s*id:\s*"application\.restart-proxy"[\s\S]*?\n {2}\},/,
+  )?.[0];
+  assert.ok(entry, "the /restart-proxy command must exist");
+  assert.match(
+    entry,
+    /unavailableReason\(context\) \{\s*return context\.halvEngineOff\s*\? "Halv Engine is off\. Turn it on in Settings\."\s*: null;/,
+  );
+  assert.match(
+    source,
+    /case "Halv Engine is off\. Turn it on in Settings\.":\s*return t\("Halv Engine is off\. Turn it on in Settings\."\);/,
+  );
+  // App.tsx keeps the command for an engine error, so Settings and the
+  // palette both repair a failed Chat mode start.
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(
+    app,
+    /halvEngineOff: !headroomEnabled && status\.sidecar\?\.state !== "error"/,
+  );
+});
+
 test("/memories parses empty, on, off, and invalid arguments", async () => {
   assert.deepEqual(parseMemoriesCommand(""), { kind: "open" });
   assert.deepEqual(parseMemoriesCommand("ON"), { kind: "set", mode: "on" });

@@ -145,13 +145,13 @@ export function ConnectGate({
   useEffect(() => {
     if (error || cliInstallError) void recordAnalyticsEvent("setup_failed", "connection");
   }, [error, cliInstallError]);
-  const [claudeSubscriptionProxy, setClaudeSubscriptionProxy] = useState(true);
-  const [claudeSubscriptionProxyLoaded, setClaudeSubscriptionProxyLoaded] =
-    useState(false);
-  const [claudeSubscriptionProxyPending, setClaudeSubscriptionProxyPending] =
-    useState(false);
-  const [claudeSubscriptionProxyError, setClaudeSubscriptionProxyError] =
-    useState<string | null>(null);
+  // Halv Engine is off by default (1.0.1). The gate offers it to every lane.
+  const [headroomEnabled, setHeadroomEnabled] = useState(false);
+  const [headroomEnabledLoaded, setHeadroomEnabledLoaded] = useState(false);
+  const [headroomEnabledPending, setHeadroomEnabledPending] = useState(false);
+  const [headroomEnabledError, setHeadroomEnabledError] = useState<
+    string | null
+  >(null);
   const oauthAttemptRef = useRef(0);
   const oauthPendingRef = useRef(false);
   const oauthTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,7 +162,6 @@ export function ConnectGate({
     connections.codex || Boolean(auth && "chatgpt" in auth);
   const codexProbeError = probeErrorText(probeForAgent(probe, "codex"));
   const claudeConnected = connections.claude;
-  const claudeSubscriptionConnected = connections.claude;
   const kimiConnected = connections.kimi || connections.moonshot;
   const openAiConnected =
     connections.openai || Boolean(auth && "apiKey" in auth);
@@ -196,17 +195,15 @@ export function ConnectGate({
     void ipc.preferences.get()
       .then((preferences) => {
         if (!disposed) {
-          setClaudeSubscriptionProxy(
-            preferences.claudeSubscriptionProxy ?? true,
-          );
-          setClaudeSubscriptionProxyLoaded(true);
-          setClaudeSubscriptionProxyError(null);
+          setHeadroomEnabled(preferences.headroomEnabled ?? false);
+          setHeadroomEnabledLoaded(true);
+          setHeadroomEnabledError(null);
         }
       })
       .catch((cause) => {
         if (!disposed) {
-          setClaudeSubscriptionProxyLoaded(false);
-          setClaudeSubscriptionProxyError(errorText(cause));
+          setHeadroomEnabledLoaded(false);
+          setHeadroomEnabledError(errorText(cause));
         }
       });
     return () => {
@@ -379,17 +376,19 @@ export function ConnectGate({
     }
   }
 
-  async function saveClaudeSubscriptionProxy(nextEnabled: boolean) {
-    setClaudeSubscriptionProxyPending(true);
-    setClaudeSubscriptionProxyError(null);
+  async function saveHeadroomEnabled(nextEnabled: boolean) {
+    setHeadroomEnabledPending(true);
+    setHeadroomEnabledError(null);
     try {
-      const preferences = await ipc.preferences.setClaudeSubscriptionProxy({ claudeSubscriptionProxy: nextEnabled });
-      setClaudeSubscriptionProxy(preferences.claudeSubscriptionProxy);
-      setClaudeSubscriptionProxyLoaded(true);
+      const preferences = await ipc.preferences.setHeadroomEnabled({
+        headroomEnabled: nextEnabled,
+      });
+      setHeadroomEnabled(preferences.headroomEnabled);
+      setHeadroomEnabledLoaded(true);
     } catch (cause) {
-      setClaudeSubscriptionProxyError(errorText(cause));
+      setHeadroomEnabledError(errorText(cause));
     } finally {
-      setClaudeSubscriptionProxyPending(false);
+      setHeadroomEnabledPending(false);
     }
   }
 
@@ -743,57 +742,38 @@ export function ConnectGate({
           })}
         </div>
 
-        {claudeSubscriptionConnected ? (
-          <details className="space-y-2 rounded-lg border border-accent/25 bg-accent/5 px-4 py-3">
-            <summary className="cursor-pointer text-xs font-medium text-content-secondary">{t("Claude context compression settings")}</summary>
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-accent">
-              {t("Optional")}
-            </p>
-            <label className="flex cursor-pointer items-start gap-3 text-sm text-content-primary">
-              <input
-                aria-describedby="connect-claude-subscription-proxy-warning"
-                checked={claudeSubscriptionProxy}
-                className="mt-0.5 accent-accent"
-                disabled={
-                  !claudeSubscriptionProxyLoaded ||
-                  claudeSubscriptionProxyPending
-                }
-                onChange={(event) =>
-                  void saveClaudeSubscriptionProxy(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>
-                <span className="font-medium">
-                  {t("Route Claude subscription through Halv Engine")}
-                </span>
-                <span
-                  className="mt-1 block text-xs leading-5 text-content-muted"
-                  id="connect-claude-subscription-proxy-warning"
-                >
-                  {t(
-                    "Halv Engine will compress your Claude Code traffic before it reaches Anthropic. Anthropic's consumer terms may not allow modifying subscription traffic; enable at your own risk. Only affects new terminal sessions.",
-                  )}
-                </span>
+        <div className="rounded-lg border border-surface-border/25 bg-surface-raised/20 px-4 py-3">
+          <label className="flex cursor-pointer items-start gap-3 text-sm text-content-primary">
+            <input
+              aria-describedby="connect-headroom-description"
+              checked={headroomEnabled}
+              className="mt-0.5 accent-accent"
+              disabled={!headroomEnabledLoaded || headroomEnabledPending}
+              onChange={(event) =>
+                void saveHeadroomEnabled(event.target.checked)
+              }
+              type="checkbox"
+            />
+            <span>
+              <span className="font-medium">
+                {t("Use Halv Engine to compress context (optional)")}
               </span>
-            </label>
-            <details className="pl-7 text-xs text-content-secondary">
-              <summary className="cursor-pointer font-medium text-accent focus:outline-none focus:ring-2 focus:ring-accent/30">
-                {t("Learn more")}
-              </summary>
-              <p className="mt-2 leading-5">
+              <span
+                className="mt-1 block text-xs leading-5 text-content-muted"
+                id="connect-headroom-description"
+              >
                 {t(
-                  "Headroom compresses repeated and low-value context before Claude Code sends it to Anthropic, which reduces input tokens. Anthropic's consumer terms may not allow modified subscription traffic, so this option carries terms risk and stays off by default.",
+                  "Halv Engine compresses context before it reaches your AI provider, so you use fewer tokens. It is off by default. You can change it later in Settings.",
                 )}
-              </p>
-            </details>
-            {claudeSubscriptionProxyError ? (
-              <p className="pl-7 text-xs text-danger" role="alert">
-                {claudeSubscriptionProxyError}
-              </p>
-            ) : null}
-          </details>
-        ) : null}
+              </span>
+            </span>
+          </label>
+          {headroomEnabledError ? (
+            <p className="mt-2 pl-7 text-xs text-danger" role="alert">
+              {headroomEnabledError}
+            </p>
+          ) : null}
+        </div>
 
         <details
           className="group"
@@ -855,7 +835,7 @@ export function ConnectGate({
           </div>
         ) : null}
 
-        {sidecar?.state !== "running" ? (
+        {sidecar?.state === "starting" || sidecar?.state === "installing" ? (
           <p className="border-t border-surface-border/20 pt-4 text-center text-xs text-content-muted">
             {t("Starting the local engine…")}
           </p>

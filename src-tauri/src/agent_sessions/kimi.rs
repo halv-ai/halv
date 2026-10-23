@@ -592,10 +592,7 @@ fn lane_environment(
             if api_key.is_empty() {
                 return Err("the Kimi API key cannot be empty".to_string());
             }
-            let port = proxy_port.ok_or_else(|| {
-                "the Kimi API-key lane requires a managed Headroom proxy".to_string()
-            })?;
-            let base_url = format!("http://127.0.0.1:{port}/p/{project}/v1");
+            let base_url = kimi_base_url(proxy_port, project, KIMI_API_KEY_UPSTREAM);
             vec![
                 ("KIMI_MODEL_NAME".into(), KIMI_MODEL_NAME.into()),
                 ("KIMI_MODEL_API_KEY".into(), api_key.into()),
@@ -604,10 +601,7 @@ fn lane_environment(
             ]
         }
         SessionLane::KimiSubscription => {
-            let port = proxy_port.ok_or_else(|| {
-                "the Kimi subscription lane requires a managed Headroom proxy".to_string()
-            })?;
-            let base_url = format!("http://127.0.0.1:{port}/p/{project}/v1");
+            let base_url = kimi_base_url(proxy_port, project, KIMI_SUBSCRIPTION_UPSTREAM);
             vec![
                 ("KIMI_MODEL_NAME".into(), KIMI_MODEL_NAME.into()),
                 ("KIMI_BASE_URL".into(), base_url.into()),
@@ -627,6 +621,15 @@ fn lane_environment(
         environment.push(("CODEX_HOME".into(), codex_home.as_os_str().to_os_string()));
     }
     Ok(environment)
+}
+
+/// The session prefix of the isolated engine, or `upstream` when the Halv
+/// Engine is off. The isolated engine forwards to the same `upstream`.
+fn kimi_base_url(proxy_port: Option<u16>, project: &str, upstream: &str) -> String {
+    match proxy_port {
+        Some(port) => format!("http://127.0.0.1:{port}/p/{project}/v1"),
+        None => upstream.to_string(),
+    }
 }
 
 #[derive(Default)]
@@ -967,6 +970,37 @@ mod tests {
         assert_eq!(
             environment_value(&environment, "HEADROOM_PROJECT"),
             Some("session-123")
+        );
+    }
+
+    #[test]
+    fn lanes_go_direct_when_the_halv_engine_is_off() {
+        let subscription =
+            lane_environment(&SessionLane::KimiSubscription, None, "session-123", None)
+                .expect("subscription environment without an engine should build");
+        assert_eq!(
+            environment_value(&subscription, "KIMI_BASE_URL"),
+            Some(KIMI_SUBSCRIPTION_UPSTREAM)
+        );
+
+        let api_key = lane_environment(
+            &SessionLane::KimiApiKey {
+                credential: super::super::SessionCredential::ApiKey {
+                    api_key: "kimi-test-key".to_string(),
+                },
+            },
+            None,
+            "session-123",
+            None,
+        )
+        .expect("API-key environment without an engine should build");
+        assert_eq!(
+            environment_value(&api_key, "KIMI_MODEL_BASE_URL"),
+            Some(KIMI_API_KEY_UPSTREAM)
+        );
+        assert_eq!(
+            environment_value(&api_key, "KIMI_MODEL_API_KEY"),
+            Some("kimi-test-key")
         );
     }
 

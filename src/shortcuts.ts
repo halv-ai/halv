@@ -266,6 +266,13 @@ export const shortcutDefinitions: ShortcutDefinition[] = [
     defaultBinding: "mod+alt+arrowright",
   },
   {
+    id: "task.next_in_queue",
+    label: "Open next in queue",
+    description: "Open the oldest item that waits for you or has an unread result.",
+    category: "Task",
+    defaultBinding: "mod+shift+u",
+  },
+  {
     id: "input.dictation",
     label: "Dictation",
     description: "Start or stop speech dictation in the composer.",

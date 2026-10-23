@@ -9,7 +9,11 @@
 //! threads. On macOS, a full cap removes the oldest delivered banners of the
 //! app, so their waits end and new banners keep the click action. Elsewhere
 //! a banner above the cap shows without a click action.
+//!
+//! When macOS denies Halv, nobody can click a banner, so a denied banner
+//! takes no waiting thread. Each banner adds one line to `notifications.log`.
 
+use crate::notification_permission::NotificationPermissionState;
 use serde::Serialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::AppHandle;
@@ -93,20 +97,72 @@ fn clip(text: &str, limit: usize) -> String {
     clipped
 }
 
+/// What a click on a banner announces. A banner without a pane, such as the
+/// test banner of Settings, only brings the window forward.
+#[cfg_attr(not(desktop), allow(dead_code))]
+fn click_announcement(session_id: String) -> Option<NotificationClicked> {
+    (!session_id.is_empty()).then_some(NotificationClicked { session_id })
+}
+
+/// True when a click on the banner can reach Halv. A denied banner stays
+/// hidden, so a thread that waits for its click would wait for ever.
+#[cfg_attr(any(windows, not(desktop)), allow(dead_code))]
+fn waits_for_click(state: NotificationPermissionState) -> bool {
+    state != NotificationPermissionState::Denied
+}
+
+/// Writes the line of one banner to the log. A failed write only costs a line.
+#[cfg(desktop)]
+fn record_banner(
+    app: &AppHandle,
+    session_id: &str,
+    kind: Option<&str>,
+    trace: Option<&str>,
+    state: NotificationPermissionState,
+) {
+    let state = serde_json::to_value(state)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let line = crate::notification_log::banner_line(
+        &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        session_id,
+        kind,
+        trace,
+        &state,
+    );
+    let written = crate::app_data::resolved_app_data_dir(app).and_then(|dir| {
+        crate::notification_log::append(&dir.join("logs"), &line).map_err(|error| error.to_string())
+    });
+    if let Err(error) = written {
+        eprintln!("agent status: could not log a notification: {error}");
+    }
+}
+
 /// Shows an OS notification for a terminal pane. A click on it focuses the
-/// app and names the pane in `terminal-notification-clicked`.
+/// app and names the pane in `terminal-notification-clicked`. `kind` and
+/// `trace` name the reason of the banner for the log.
 #[tauri::command]
 pub fn terminal_notify(
     app: AppHandle,
     session_id: String,
     title: String,
     body: String,
+    kind: Option<String>,
+    trace: Option<String>,
 ) -> Result<(), String> {
     let title = clip(&title, MAX_TITLE_CHARS);
     if title.is_empty() {
         return Err("the notification needs a title".to_string());
     }
-    deliver(app, session_id, title, clip(&body, MAX_BODY_CHARS));
+    deliver(
+        app,
+        session_id,
+        title,
+        clip(&body, MAX_BODY_CHARS),
+        kind,
+        trace,
+    );
     Ok(())
 }
 
@@ -116,16 +172,23 @@ fn clicked(app: &AppHandle, session_id: String) {
     if let Err(error) = crate::tray::show_main_window(app) {
         eprintln!("agent status: could not show the window: {error}");
     }
-    if let Err(error) = app.emit(
-        NOTIFICATION_CLICKED_EVENT,
-        NotificationClicked { session_id },
-    ) {
+    let Some(announcement) = click_announcement(session_id) else {
+        return;
+    };
+    if let Err(error) = app.emit(NOTIFICATION_CLICKED_EVENT, announcement) {
         eprintln!("agent status: could not announce a notification click: {error}");
     }
 }
 
 #[cfg(all(desktop, not(windows)))]
-fn deliver(app: AppHandle, session_id: String, title: String, body: String) {
+fn deliver(
+    app: AppHandle,
+    session_id: String,
+    title: String,
+    body: String,
+    kind: Option<String>,
+    trace: Option<String>,
+) {
     #[cfg(target_os = "macos")]
     {
         // The plugin does the same. A dev build has no bundle, so it posts
@@ -142,7 +205,14 @@ fn deliver(app: AppHandle, session_id: String, title: String, body: String) {
     #[cfg(not(target_os = "macos"))]
     notification.action("default", "default");
     std::thread::spawn(move || {
-        let slot = WAITERS.try_acquire().or_else(|| free_a_slot(&app));
+        // The read waits a few milliseconds, so it runs on this thread.
+        let state = crate::notification_permission::current_state();
+        record_banner(&app, &session_id, kind.as_deref(), trace.as_deref(), state);
+        let slot = if waits_for_click(state) {
+            WAITERS.try_acquire().or_else(|| free_a_slot(&app))
+        } else {
+            None
+        };
         let handle = match notification.show() {
             Ok(handle) => handle,
             Err(error) => {
@@ -238,8 +308,22 @@ fn trim_delivered_banners(keep: usize) {
 }
 
 #[cfg(all(desktop, windows))]
-fn deliver(_app: AppHandle, _session_id: String, title: String, body: String) {
+fn deliver(
+    app: AppHandle,
+    session_id: String,
+    title: String,
+    body: String,
+    kind: Option<String>,
+    trace: Option<String>,
+) {
     std::thread::spawn(move || {
+        record_banner(
+            &app,
+            &session_id,
+            kind.as_deref(),
+            trace.as_deref(),
+            NotificationPermissionState::Unknown,
+        );
         if let Err(error) = notify_rust::Notification::new()
             .summary(&title)
             .body(&body)
@@ -251,7 +335,15 @@ fn deliver(_app: AppHandle, _session_id: String, title: String, body: String) {
 }
 
 #[cfg(not(desktop))]
-fn deliver(_app: AppHandle, _session_id: String, _title: String, _body: String) {}
+fn deliver(
+    _app: AppHandle,
+    _session_id: String,
+    _title: String,
+    _body: String,
+    _kind: Option<String>,
+    _trace: Option<String>,
+) {
+}
 
 #[cfg(test)]
 mod tests {
@@ -282,6 +374,26 @@ mod tests {
             clip(&"x".repeat(500), MAX_BODY_CHARS).chars().count(),
             MAX_BODY_CHARS
         );
+    }
+
+    #[test]
+    fn a_denied_banner_takes_no_waiting_thread() {
+        assert!(!waits_for_click(NotificationPermissionState::Denied));
+        for state in [
+            NotificationPermissionState::Granted,
+            NotificationPermissionState::NotDetermined,
+            NotificationPermissionState::BannersOff,
+            NotificationPermissionState::Unknown,
+        ] {
+            assert!(waits_for_click(state));
+        }
+    }
+
+    #[test]
+    fn a_banner_without_a_pane_announces_no_click() {
+        assert!(click_announcement(String::new()).is_none());
+        let announcement = click_announcement("terminal-1".to_string()).unwrap();
+        assert_eq!(announcement.session_id, "terminal-1");
     }
 
     #[test]

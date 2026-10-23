@@ -1789,6 +1789,7 @@ name = "halv"
 version = "1.0.1"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "chacha20poly1305",
  "chrono",
  "chrono-tz",

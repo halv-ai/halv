@@ -8,6 +8,7 @@ import {
 } from "./components/AnonymousUsagePreference";
 import { ipc, type UnlistenFn } from "./ipc.ts";
 import { openExternalLink } from "./externalLinks.ts";
+import { dotShortcutVisible } from "./preferences.ts";
 import {
   useCallback,
   useEffect,
@@ -121,6 +122,7 @@ import {
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { HalvCloudCard } from "./components/HalvCloudCard";
 import { TrialGoalCard } from "./components/TrialGoalCard";
+import { createNotificationThrottle } from "./chatNotificationThrottle";
 import { notify, notifyTerminalPane } from "./notifications";
 import { confirmDialog, promptDialog } from "./dialogs";
 import { offerCruxIndexApproval } from "./cruxIndexApproval";
@@ -165,6 +167,16 @@ import {
 } from "./components/ThreadSidebar";
 import { SavingsPanel } from "./components/SavingsPanel";
 import { StatusBar } from "./components/StatusBar";
+import {
+  AttentionQueueChip,
+  AttentionQueueDock,
+} from "./components/AttentionQueue";
+import { attentionFinished, nextQueueItem } from "./attentionQueue";
+import {
+  useAttentionQueue,
+  useQueueNextShortcut,
+  type AttentionQueueRow,
+} from "./useAttentionQueue";
 import type { SettingsConnectionsRequest } from "./components/SettingsConnections";
 import type { WalletProvider } from "./accountWallet";
 import { useWalletSnapshot } from "./components/AccountWallet";
@@ -180,6 +192,7 @@ import {
 } from "./commands";
 import type { CustomPrompt } from "./customPrompts";
 import { formatCompactTokens, hasProviderCredentials } from "./format";
+import { engineReadyForSend } from "./engine";
 import {
   CONNECT_GATE_DISMISSED_STORAGE_KEY,
   connectGateConnections,
@@ -1134,6 +1147,10 @@ function App() {
     "chat",
   );
   const [dotOpen, setDotOpen] = useState(false);
+  // The Dot pin is off until the user turns it on in Settings.
+  const [showDotShortcut, setShowDotShortcut] = useState(false);
+  // The Halv Engine switch. Off by default since 1.0.1.
+  const [headroomEnabled, setHeadroomEnabled] = useState(false);
   const [diffRailFocusSignal, setDiffRailFocusSignal] = useState(0);
   const [themePreference, setThemePreferenceState] =
     useState<ThemePreference>(readThemePreference);
@@ -1434,7 +1451,8 @@ function App() {
   const queuedRef = useRef<QueuedMessage[]>([]);
   const deletedConversationIdsRef = useRef(new Set<string>());
   const lastTodayDateRef = useRef(localDateKey());
-  const lastNotifiedAtRef = useRef(0);
+  // One window for each conversation and kind of chat banner.
+  const chatNotificationThrottleRef = useRef(createNotificationThrottle(60_000));
   const approvalDecisionsPendingRef = useRef(new Set<string>());
   const sidecarRestartPendingRef = useRef(false);
   const draftRef = useRef("");
@@ -3311,6 +3329,11 @@ function App() {
     const command = truncateNotificationText(
       payload.command ?? payload.toolKind ?? t("tool call"),
     );
+    if (payload.toolKind === "mcp_elicitation") {
+      // An MCP server that asks for information asks a question.
+      void notify(t("Halv needs your answer"), command, "question");
+      return;
+    }
     void notify(
       t("Halv needs approval"),
       t("Wants to run: {command}", { command }),
@@ -3324,11 +3347,14 @@ function App() {
     }
     // Read the live translate function through the ref.
     const t = tRef.current;
-    const now = Date.now();
-    if (now - lastNotifiedAtRef.current < 60_000) {
+    if (
+      !chatNotificationThrottleRef.current.allow(
+        `${payload.conversationId}:${payload.kind}`,
+        Date.now(),
+      )
+    ) {
       return;
     }
-    lastNotifiedAtRef.current = now;
 
     if (payload.kind === "done") {
       const title =
@@ -3342,6 +3368,7 @@ function App() {
     void notify(
       t("Halv hit an error"),
       truncateNotificationText(payload.text ?? t("Chat request failed")),
+      "error",
     );
   }
 
@@ -3623,7 +3650,15 @@ function App() {
           { agent: agentSessionAgentLabel(terminal.agentKind), title },
           tRef.current,
         );
-        if (text) void notifyTerminalPane(sessionId, text.title, text.body, kind);
+        if (text) {
+          void notifyTerminalPane(
+            sessionId,
+            text.title,
+            text.body,
+            kind,
+            `${view.source}:${view.status}:wait${view.waitSeq}:turn${view.turnSeq}`,
+          );
+        }
       },
     });
     const unsubscribe = terminalActivityStore.subscribePanes(
@@ -3779,6 +3814,66 @@ function App() {
   const shellTabVisible =
     shellTabsOn &&
     parseTabKey(navigationTabKey(navigation, workspaceTabsSnapshot))?.kind === "shell";
+  // The attention queue: agents that wait for the user, and results that
+  // the user did not view. The oldest item comes first. A click opens the
+  // exact pane or chat. The item leaves when the user answers or views it.
+  const attentionQueueRows = useAttentionQueue({
+    terminals: sidebarTerminals,
+    conversations,
+    unviewedConversationIds,
+    pendingApprovals,
+    focusedSessionId: terminalActivitySnapshot.focusedSessionId,
+    readingConversationId:
+      dotOpen || settingsOpen || workspaceView !== "chat" || shellTabVisible
+        ? null
+        : currentConversationId,
+  });
+  const lastOpenedQueueKeyRef = useRef<string | null>(null);
+  function markQueueRowRead(row: AttentionQueueRow) {
+    if (!attentionFinished(row.kind)) return;
+    if (row.target.kind === "pane") {
+      terminalActivityStore.markViewed(row.target.sessionId);
+      return;
+    }
+    const conversationId = row.target.conversationId;
+    setUnviewedConversationIds((current) =>
+      clearConversationUnviewed(current, conversationId),
+    );
+  }
+  function markAllQueueRowsRead() {
+    for (const row of attentionQueueRows) markQueueRowRead(row);
+  }
+  // The row is read before the jump, as in the tree. "Next" cannot loop on
+  // one finished item this way.
+  function openQueueItem(row: AttentionQueueRow) {
+    lastOpenedQueueKeyRef.current = row.key;
+    markQueueRowRead(row);
+    if (row.target.kind === "pane") {
+      focusNotifiedTerminalRef.current(row.target.sessionId);
+    } else {
+      setDotOpen(false);
+      if (settingsOpen) closeSettings();
+      setWorkspaceView("chat");
+      void openConversation(row.target.conversationId);
+    }
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setSidebarCollapsed(true);
+    }
+  }
+  const openNextQueueItemRef = useRef<() => void>(() => undefined);
+  openNextQueueItemRef.current = () => {
+    const next = nextQueueItem(attentionQueueRows, lastOpenedQueueKeyRef.current);
+    if (next) openQueueItem(next);
+  };
+  useQueueNextShortcut({
+    overrides: shortcutOverrides,
+    blocked:
+      keyboardShortcutsOpen ||
+      commandPaletteOpen ||
+      Boolean(projectModal) ||
+      Boolean(trustPrompt),
+    onNext: () => openNextQueueItemRef.current(),
+  });
   function tabBodyKind(conversation: ConversationSummary) {
     const entry = agentSessionForConversationMode(
       agentSessionsState.entries,
@@ -5304,6 +5399,8 @@ function App() {
         setDraftApprovalPolicy(preferences?.defaultApprovalPolicy ?? null);
         setDraftFastMode(preferences?.defaultFastMode ?? false);
         setShortcutOverrides(preferences?.keyboardShortcuts ?? {});
+        setShowDotShortcut(dotShortcutVisible(preferences));
+        setHeadroomEnabled(preferences?.headroomEnabled ?? false);
         const lastActiveConversationId = resolveLastActiveConversationId(
           readLastActiveConversationId(window.localStorage),
           conversationRows.map((conversation) => conversation.id),
@@ -9779,7 +9876,11 @@ function App() {
         workspaceId: runWorkspaceId,
       }).catch(() => undefined);
       await refreshAutomationUnreadCount();
-      void notify(t("Automation failed: {name}", { name: automation.name }), message);
+      void notify(
+        t("Automation failed: {name}", { name: automation.name }),
+        message,
+        "error",
+      );
     }
   }
 
@@ -9809,6 +9910,7 @@ function App() {
       completedTurns: completedTurnCount(messages),
       chatMode: chatModeFor(activeAgentMode, effectiveApprovalPolicy),
       workflowMode: activeWorkflowMode,
+      halvEngineOff: !headroomEnabled && status.sidecar?.state !== "error",
       setDraft,
       setModel: handleModelChange,
       setEffort: handleEffortChange,
@@ -10541,6 +10643,15 @@ function App() {
         <ThreadSidebar
           projectTree={sidebarProjectTree}
           dotOpen={dotOpen}
+          showDot={showDotShortcut}
+          queueDock={
+            <AttentionQueueDock
+              onMarkAllRead={markAllQueueRowsRead}
+              onMarkRead={markQueueRowRead}
+              onOpen={openQueueItem}
+              rows={attentionQueueRows}
+            />
+          }
           onOpenDot={() => setDotOpen(true)}
           collapsed={sidebarCollapsed}
           conversations={conversations}
@@ -11570,7 +11681,7 @@ function App() {
                     <PreparedFirstTask
                       draft={draft}
                       error={chatError || (status.sidecar?.state === "error" ? status.sidecar.message : null)}
-                      engineReady={status.sidecar?.state === "running"}
+                      engineReady={engineReadyForSend(status.sidecar)}
                       pending={firstRunProjectPending || sidecarRestartPending || selectedSendPending}
                       onDraftChange={setDraft}
                       onRetryEngine={() => void handleRestartSidecar()}
@@ -11845,6 +11956,16 @@ function App() {
       ) : null}
 
       <StatusBar
+        leading={
+          sidebarCollapsed ? (
+            <AttentionQueueChip
+              onMarkAllRead={markAllQueueRowsRead}
+              onMarkRead={markQueueRowRead}
+              onOpen={openQueueItem}
+              rows={attentionQueueRows}
+            />
+          ) : null
+        }
         onAddAccount={(provider) => openConnectionsSettings(provider)}
         onManageAccounts={() => openConnectionsSettings(null)}
         onOpenUsageDetails={() => setSavingsDrawerOpen(true)}
@@ -11886,6 +12007,15 @@ function App() {
         onRestartSidecar={handleRestartSidecar}
         onLanguageChange={setLanguagePreferenceState}
         onThemeChange={setThemePreferenceState}
+        onShowDotShortcutChange={(show) => {
+          setShowDotShortcut(show);
+          // Closing the panel unmounts DotPanel. Its cleanup hides the Dot webview.
+          if (!show) setDotOpen(false);
+        }}
+        onHeadroomEnabledChange={(enabled) => {
+          setHeadroomEnabled(enabled);
+          void refreshStatus();
+        }}
         onUpdateHeadroom={handleUpdateHeadroom}
         open={settingsOpen}
         memoriesFocusSignal={settingsMemoriesFocusSignal}

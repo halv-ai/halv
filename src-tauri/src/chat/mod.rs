@@ -3424,6 +3424,12 @@ async fn request_generated_memories(
     effort: &str,
     request: &str,
 ) -> Result<String, String> {
+    // A memory is a background request. It streams through `proxy_port`,
+    // which starts the engine on demand, so check first: a memory never
+    // starts an engine that is off.
+    if !sidecar.serves_background_requests() {
+        return Err(crate::sidecar::ENGINE_OFF_MESSAGE.to_string());
+    }
     let cancel = Arc::new(AtomicBool::new(false));
     let headroom_project = gui_background_headroom_project(conversation_id, "memory");
     let response = if is_claude_model(model) {
@@ -3653,6 +3659,11 @@ async fn request_generated_title(
     model: &str,
     first_user_message: &str,
 ) -> Result<String, String> {
+    // A title is a background request, so it never starts an engine that is
+    // off. A Chat mode title still runs, because its send started the engine.
+    if !sidecar.serves_background_requests() {
+        return Err(crate::sidecar::ENGINE_OFF_MESSAGE.to_string());
+    }
     let headroom_project = gui_background_headroom_project(conversation_id, "title");
     let result = async {
         if is_claude_model(model) {
@@ -3675,7 +3686,7 @@ async fn request_generated_title(
             .map_err(|error| error.message)?;
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         let body = build_title_generation_request_body(conversation_id, model, first_user_message);
-        let port = proxy_port(sidecar)
+        let port = background_proxy_port(sidecar)
             .await
             .map_err(|error| error.to_string())?;
         let url = format!("http://127.0.0.1:{port}/v1/responses");
@@ -3716,7 +3727,7 @@ async fn request_generated_claude_title(
     insert_headroom_project_header(&mut headers, headroom_project)
         .map_err(|error| error.message)?;
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    let port = proxy_port(sidecar)
+    let port = background_proxy_port(sidecar)
         .await
         .map_err(|error| error.to_string())?;
     let response = add_headroom_compression_headers(
@@ -4541,7 +4552,9 @@ async fn fetch_openai_models(
         .map_err(|error| error.to_string())?;
     insert_headroom_project_header(&mut headers, &headroom_project.key)
         .map_err(|error| error.message)?;
-    let port = proxy_port(sidecar)
+    // The app asks for the model list at launch and on each window focus.
+    // While the engine is off, this error gives the fallback models.
+    let port = background_proxy_port(sidecar)
         .await
         .map_err(|error| error.to_string())?;
     let url =
@@ -10616,8 +10629,16 @@ fn duration_millis(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
+/// The engine port for a Chat mode send. It starts the engine on demand,
+/// also while the Halv Engine is off.
 async fn proxy_port(sidecar: &SidecarManager) -> ChatResult<u16> {
     proxy_port_from_status(sidecar.ensure_ready().await)
+}
+
+/// The engine port for a background request: the model list or a title.
+/// It never starts an engine that is off (`background_status`).
+async fn background_proxy_port(sidecar: &SidecarManager) -> ChatResult<u16> {
+    proxy_port_from_status(sidecar.background_status().await)
 }
 
 fn proxy_port_from_status(status: SidecarStatus) -> ChatResult<u16> {
@@ -10637,6 +10658,9 @@ fn proxy_port_from_status(status: SidecarStatus) -> ChatResult<u16> {
         ))),
         SidecarStatus::NotInstalled { install_hint, .. } => Err(ChatError::new(install_hint)),
         SidecarStatus::Error { message, .. } => Err(ChatError::new(message)),
+        // `ensure_ready` never returns Off. `background_status` returns Off
+        // when the engine is off and no engine runs.
+        SidecarStatus::Off { .. } => Err(ChatError::new(crate::sidecar::ENGINE_OFF_MESSAGE)),
     }
 }
 
@@ -14741,6 +14765,34 @@ mod tests {
             .expect("Halv detected the adopted listener");
 
         assert_eq!(port, 4302);
+    }
+
+    #[test]
+    fn proxy_port_reports_an_engine_that_is_off() {
+        let error = proxy_port_from_status(SidecarStatus::Off { port: 4304 })
+            .expect_err("an engine that is off has no port");
+
+        assert_eq!(error.message, "Halv Engine is off");
+    }
+
+    // The app asks for the model list at launch and on each window focus.
+    // While the engine is off, the list must not start it.
+    #[tokio::test]
+    async fn the_model_list_does_not_start_an_engine_that_is_off() {
+        let chat = ChatManager::new();
+        let sidecar = SidecarManager::new(4306);
+        sidecar.set_enabled(false);
+
+        let error = fetch_openai_models(&chat, &sidecar, &chatgpt_bearer())
+            .await
+            .expect_err("an engine that is off gives no model registry");
+
+        // `chat_list_models` turns this error into the built-in models.
+        assert_eq!(error, "Halv Engine is off");
+        assert!(matches!(
+            sidecar.refresh_status().await,
+            SidecarStatus::Off { port: 4306 }
+        ));
     }
 
     #[test]

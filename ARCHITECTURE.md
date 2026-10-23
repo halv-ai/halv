@@ -47,6 +47,9 @@ hostnames or device identifiers, or file contents.
    require the managed child to remain alive. If the `headroom` binary is missing,
    the guided uv/pipx installer pins the architecture-verified `headroom-ai==0.28.0`;
    discovery of already-installed user binaries remains unchanged.
+   Since 1.0.1 the Halv Engine (Headroom) is optional and off by default. While it
+   is off, launch starts no engine and every pane lane goes direct to its upstream.
+   Native Chat mode still starts the engine on demand at the first send.
 3. **`chat/`** — Streaming chat engine (SSE). One local endpoint for both modes:
    send Responses-API requests to the managed proxy's dynamic
    `http://127.0.0.1:<port>/v1/responses` endpoint; the Headroom

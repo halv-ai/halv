@@ -122,11 +122,13 @@ const APP_COMMANDS: &[&str] = &[
     "preferences_set_personality",
     "preferences_set_ponytail",
     "preferences_set_claude_subscription_proxy",
+    "preferences_set_headroom_enabled",
     "preferences_set_memories_enabled",
     "preferences_set_task_routing",
     "preferences_set_worker_lane",
     "preferences_set_workflow_routing",
     "preferences_set_claude_ultracode",
+    "preferences_set_show_dot_shortcut",
     "preferences_set_routing_tier_agents",
     "preferences_set_analytics_enabled",
     "preferences_set_analytics_consent",
@@ -171,6 +173,7 @@ const APP_COMMANDS: &[&str] = &[
     "browser_settings_set",
     "browser_clear_data",
     "sidecar_status",
+    "sidecar_runs_for_restored_sessions",
     "sidecar_stats",
     "sidecar_restart",
     "sidecar_install_headroom",
@@ -291,6 +294,9 @@ const APP_COMMANDS: &[&str] = &[
     "agent_status_mark_viewed",
     "agent_status_set_focus",
     "terminal_notify",
+    "notification_permission_state",
+    "notification_request_permission",
+    "notification_open_system_settings",
 ];
 
 fn main() {

@@ -177,6 +177,8 @@ Otherwise, the completion event contains zero usage.
 | `custom` with Claude | Caller parent; nested Codex through Headroom | Measured nested Codex delta |
 | `custom` with Codex | Caller-defined | Estimated from reported cache-read usage |
 
+Since 1.0.1 the Halv Engine (Headroom) is optional and off by default. While it is off, each lane goes direct to its upstream URL. The nested Codex home stays without the Headroom provider, so nested Codex usage stays measured. Native Chat mode still starts the engine on demand at the first send.
+
 ## Usage semantics
 
 Claude result cost is cumulative for the CLI session. Halv stores the delta from the previous result as the turn cost.

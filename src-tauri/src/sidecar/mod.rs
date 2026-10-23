@@ -150,6 +150,9 @@ fn bundled_headroom_lock() -> &'static BundledHeadroomLock {
     })
 }
 
+/// The error text of a call that needs an engine while the user turned it off.
+pub(crate) const ENGINE_OFF_MESSAGE: &str = "Halv Engine is off";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(
     tag = "state",
@@ -177,6 +180,11 @@ pub enum SidecarStatus {
     },
     Error {
         message: String,
+        port: u16,
+    },
+    /// The user turned the Halv Engine off and no engine runs. No screen
+    /// treats this state as an error.
+    Off {
         port: u16,
     },
 }
@@ -974,6 +982,16 @@ struct SidecarInner {
     /// The child exited and the outcome of the automatic restart is not
     /// reported yet.
     exit_report_pending: AtomicBool,
+    /// The Halv Engine preference. Off stops the launch start, the pane
+    /// starts and the background starts (`background_status`). A start on
+    /// demand (`ensure_ready`) for a Chat mode send ignores it.
+    enabled: AtomicBool,
+    /// Restored sessions from an earlier app run point at the engine port.
+    /// The engine then runs for this app run, also while the preference is
+    /// off. New sessions still follow `enabled`.
+    restored_sessions: AtomicBool,
+    /// `startup` spawned the supervisor loop. It spawns only one loop.
+    supervisor_started: AtomicBool,
 }
 
 /// Receives a proxy failure: the `proxy_failed` category and true when the
@@ -1050,6 +1068,9 @@ impl SidecarManager {
                 client,
                 failure_reporter: RwLock::new(None),
                 exit_report_pending: AtomicBool::new(false),
+                enabled: AtomicBool::new(true),
+                restored_sessions: AtomicBool::new(false),
+                supervisor_started: AtomicBool::new(false),
             }),
         }
     }
@@ -1078,7 +1099,11 @@ impl SidecarManager {
                     .persisted_port
                     .write()
                     .expect("persisted port lock poisoned") = Some(port);
-                self.set_status(SidecarStatus::Starting { port });
+                if matches!(self.current_status(), SidecarStatus::Off { .. }) {
+                    self.set_status(SidecarStatus::Off { port });
+                } else {
+                    self.set_status(SidecarStatus::Starting { port });
+                }
             }
             Ok(None) => {}
             Err(error) => eprintln!("{error}"),
@@ -1091,6 +1116,79 @@ impl SidecarManager {
             .resource_dir
             .write()
             .expect("resource dir lock poisoned") = Some(resource_dir);
+    }
+
+    /// Saves the Halv Engine preference. Off with no engine process sets the
+    /// `Off` status. Off never stops a running engine, so running proxied
+    /// panes keep working until quit. On with the `Off` status sets
+    /// `Starting`; the caller then calls `startup`.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.inner.enabled.store(enabled, Ordering::SeqCst);
+        let port = self.port();
+        let current = self.current_status();
+        if enabled {
+            if matches!(current, SidecarStatus::Off { .. }) {
+                self.set_status(SidecarStatus::Starting { port });
+            }
+        } else if !self.has_managed_child_slot()
+            && !self.inner.restored_sessions.load(Ordering::SeqCst)
+            && !matches!(current, SidecarStatus::Installing { .. })
+        {
+            self.set_status(SidecarStatus::Off { port });
+        }
+    }
+
+    /// True when the user turned the Halv Engine on.
+    pub fn is_enabled(&self) -> bool {
+        self.inner.enabled.load(Ordering::SeqCst)
+    }
+
+    /// Keeps the engine for restored sessions that point at its port. The
+    /// caller then calls `startup`. The engine runs until quit, but new
+    /// sessions still follow the preference.
+    pub fn keep_for_restored_sessions(&self) {
+        self.inner.restored_sessions.store(true, Ordering::SeqCst);
+        if matches!(self.current_status(), SidecarStatus::Off { .. }) {
+            self.set_status(SidecarStatus::Starting { port: self.port() });
+        }
+    }
+
+    /// True when the preference is off but the engine runs for restored
+    /// sessions until quit.
+    pub fn runs_for_restored_sessions(&self) -> bool {
+        self.inner.restored_sessions.load(Ordering::SeqCst) && !self.is_enabled()
+    }
+
+    /// True when the engine runs for this app run: the preference is on, or
+    /// restored sessions use it. A start on demand for Chat mode ignores it.
+    pub fn should_run(&self) -> bool {
+        self.is_enabled() || self.inner.restored_sessions.load(Ordering::SeqCst)
+    }
+
+    /// True when a background request may use the engine: the Halv Engine
+    /// is on, or a managed engine runs already. Background requests are the
+    /// model list, titles and memories. False means the request must not
+    /// start an engine.
+    pub fn serves_background_requests(&self) -> bool {
+        self.is_enabled() || self.managed_child_is_running()
+    }
+
+    /// The engine status for a background request. On, it starts the engine
+    /// on demand like `ensure_ready`. Off, it never starts an engine: it
+    /// gives the status of a managed engine that runs, else `Off`.
+    pub async fn background_status(&self) -> SidecarStatus {
+        if self.is_enabled() {
+            return self.ensure_ready().await;
+        }
+        if self.managed_child_is_running() {
+            self.current_status()
+        } else {
+            SidecarStatus::Off { port: self.port() }
+        }
+    }
+
+    fn is_off_without_child(&self) -> bool {
+        matches!(self.current_status(), SidecarStatus::Off { .. }) && !self.has_managed_child_slot()
     }
 
     pub(crate) fn set_failure_reporter(&self, reporter: ProxyFailureReporter) {
@@ -1153,11 +1251,49 @@ impl SidecarManager {
 
     /// Start the immutable Headroom runtime shipped in this Halv build. The
     /// bundle is version-coupled to the app and is never replaced by uv/pipx.
+    /// A second call starts no second supervisor loop. A call while the
+    /// engine must not run (`should_run`) starts nothing.
     pub async fn startup(&self) {
-        self.reap_orphaned_headroom_proxies();
-        // `ensure_ready` reports a failed start.
-        self.ensure_ready().await;
-        self.spawn_supervisor();
+        if !self.should_run() {
+            return;
+        }
+        let first_start = self.claim_supervisor();
+        if first_start {
+            self.reap_orphaned_headroom_proxies();
+        }
+        if let Some(status) = self.start_if_it_should_run().await {
+            self.report_start_outcome(&status);
+        }
+        // The supervisor only reaps and heals a child, so it is safe to
+        // run while the engine is off.
+        if first_start {
+            self.spawn_supervisor();
+        }
+    }
+
+    /// Starts the engine under the lifecycle lock. A quick "on" and "off" can
+    /// run this after the "off", so it checks `should_run` again before the
+    /// child spawns, and stops a child it spawned if the "off" came during
+    /// the start. Returns `None` when it starts nothing.
+    async fn start_if_it_should_run(&self) -> Option<SidecarStatus> {
+        let _guard = self.inner.op_lock.lock().await;
+        if !self.should_run() {
+            return None;
+        }
+        let had_child = self.has_managed_child_slot();
+        let status = self.ensure_ready_locked().await;
+        if !had_child && !self.should_run() {
+            self.kill_child();
+            let port = self.port();
+            self.set_status(SidecarStatus::Off { port });
+            return None;
+        }
+        Some(status)
+    }
+
+    /// True only for the first caller, which then spawns the supervisor.
+    fn claim_supervisor(&self) -> bool {
+        !self.inner.supervisor_started.swap(true, Ordering::SeqCst)
     }
 
     /// Watches the managed child until shutdown. The UI poll used to be the
@@ -1330,8 +1466,8 @@ impl SidecarManager {
                 SidecarInstallStage::Error,
                 format!("Proxy installed, but it did not start: {message}"),
             ),
-            // ensure_ready_locked never yields Installing.
-            SidecarStatus::Installing { .. } => {}
+            // ensure_ready_locked never yields Installing or Off.
+            SidecarStatus::Installing { .. } | SidecarStatus::Off { .. } => {}
         }
         Ok(status)
     }
@@ -1363,7 +1499,8 @@ impl SidecarManager {
             let status = match current {
                 SidecarStatus::NotInstalled { .. }
                 | SidecarStatus::Installing { .. }
-                | SidecarStatus::Error { .. } => current,
+                | SidecarStatus::Error { .. }
+                | SidecarStatus::Off { .. } => current,
                 _ => SidecarStatus::Error {
                     message: unmanaged_endpoint_message(port),
                     port,
@@ -1576,6 +1713,10 @@ impl SidecarManager {
     ) -> Result<SidecarStats, String> {
         let _guard = self.inner.op_lock.lock().await;
         let port = self.port();
+        // A stats poll must not turn the `Off` status into an error.
+        if self.is_off_without_child() {
+            return Err(ENGINE_OFF_MESSAGE.to_string());
+        }
         let stats = match self.fetch_managed_stats().await {
             Ok(stats) => stats,
             Err(error) => {
@@ -1630,7 +1771,9 @@ impl SidecarManager {
             SidecarStatus::Running { .. } => Ok(manager),
             SidecarStatus::NotInstalled { install_hint, .. } => Err(install_hint),
             SidecarStatus::Error { message, .. } => Err(message),
-            SidecarStatus::Installing { .. } | SidecarStatus::Starting { .. } => {
+            SidecarStatus::Installing { .. }
+            | SidecarStatus::Starting { .. }
+            | SidecarStatus::Off { .. } => {
                 Err("isolated Headroom proxy did not become ready".to_string())
             }
         }
@@ -1854,7 +1997,8 @@ impl SidecarManager {
             SidecarStatus::NotInstalled { .. }
             | SidecarStatus::Installing { .. }
             | SidecarStatus::Running { .. }
-            | SidecarStatus::Starting { .. } => return status,
+            | SidecarStatus::Starting { .. }
+            | SidecarStatus::Off { .. } => return status,
         };
         let mut task_slot = self
             .inner
@@ -3103,6 +3247,13 @@ pub async fn sidecar_status(
     manager: tauri::State<'_, SidecarManager>,
 ) -> Result<SidecarStatus, String> {
     Ok(manager.refresh_status().await)
+}
+
+/// True when the Halv Engine preference is off but the engine runs for
+/// restored sessions until quit. Settings shows it on the engine row.
+#[tauri::command]
+pub fn sidecar_runs_for_restored_sessions(manager: tauri::State<'_, SidecarManager>) -> bool {
+    manager.runs_for_restored_sessions()
 }
 
 fn lane_map_from_rows(rows: Vec<(String, String)>) -> HashMap<String, SessionLaneKind> {
@@ -5522,6 +5673,189 @@ exit 23
                 (crate::analytics::PROXY_START.to_string(), false),
             ]
         );
+        cleanup_dir(&root);
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_is_off_stays_off_through_a_refresh() {
+        let manager = SidecarManager::new(4310);
+        assert!(manager.is_enabled());
+        manager.set_enabled(false);
+
+        assert!(!manager.is_enabled());
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Off { port: 4310 }
+        ));
+        // A never-started engine reads Error when it is on, but Off when it is off.
+        let status = manager.refresh_status().await;
+        assert!(
+            matches!(status, SidecarStatus::Off { port: 4310 }),
+            "{status:?}"
+        );
+        assert!(matches!(
+            manager.refresh_status().await,
+            SidecarStatus::Off { .. }
+        ));
+
+        // A stats poll keeps the Off status too.
+        let error = manager
+            .live_stats(&HashMap::new())
+            .await
+            .expect_err("an engine that is off has no stats");
+        assert_eq!(error, ENGINE_OFF_MESSAGE);
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Off { .. }
+        ));
+
+        manager.set_enabled(true);
+        assert!(manager.is_enabled());
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Starting { port: 4310 }
+        ));
+    }
+
+    // The model list, titles and memories run at launch, on focus and after
+    // pane turns. They must not start an engine that is off.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_background_request_starts_the_engine_only_when_it_is_on() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("background-start");
+        let resources = root.join("resources");
+        let marker = root.join("started");
+        write_executable(
+            &resources
+                .join("headroom-runtime")
+                .join(bundled_binary_name()),
+            &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        );
+        let manager = SidecarManager::new(0);
+        manager.set_resource_dir(resources);
+        manager.set_enabled(false);
+
+        assert!(!manager.serves_background_requests());
+        let status = manager.background_status().await;
+        assert!(matches!(status, SidecarStatus::Off { .. }), "{status:?}");
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Off { .. }
+        ));
+        assert!(!marker.exists(), "an engine that is off must not start");
+
+        manager.set_enabled(true);
+        assert!(manager.serves_background_requests());
+        let status = manager.background_status().await;
+        assert!(matches!(status, SidecarStatus::Error { .. }), "{status:?}");
+        assert!(marker.exists(), "an engine that is on starts on demand");
+        cleanup_dir(&root);
+    }
+
+    #[test]
+    fn the_off_status_serializes_as_off() {
+        let value = serde_json::to_value(SidecarStatus::Off { port: 4311 })
+            .expect("the Off status should serialize");
+        assert_eq!(value, serde_json::json!({ "state": "off", "port": 4311 }));
+    }
+
+    #[test]
+    fn startup_claims_the_supervisor_once() {
+        let manager = SidecarManager::new(0);
+        assert!(manager.claim_supervisor());
+        assert!(!manager.claim_supervisor());
+        assert!(!manager.clone().claim_supervisor());
+    }
+
+    #[test]
+    fn restored_sessions_keep_the_engine_while_the_preference_is_off() {
+        let manager = SidecarManager::new(4312);
+        manager.set_enabled(false);
+        assert!(!manager.should_run());
+        assert!(!manager.runs_for_restored_sessions());
+
+        manager.keep_for_restored_sessions();
+        assert!(!manager.is_enabled(), "new sessions still go direct");
+        assert!(manager.should_run());
+        assert!(manager.runs_for_restored_sessions());
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Starting { port: 4312 }
+        ));
+        // Another "off" keeps the engine for the restored sessions.
+        manager.set_enabled(false);
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Starting { .. }
+        ));
+        // With the preference on, the engine runs for every session.
+        manager.set_enabled(true);
+        assert!(manager.should_run());
+        assert!(!manager.runs_for_restored_sessions());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_start_while_the_engine_is_off_starts_nothing() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("start-off");
+        let resources = root.join("resources");
+        let marker = root.join("started");
+        write_executable(
+            &resources
+                .join("headroom-runtime")
+                .join(bundled_binary_name()),
+            &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        );
+        let manager = SidecarManager::new(0);
+        manager.set_resource_dir(resources);
+        manager.set_enabled(false);
+
+        assert!(manager.start_if_it_should_run().await.is_none());
+        assert!(!marker.exists(), "an engine that is off must not start");
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Off { .. }
+        ));
+        cleanup_dir(&root);
+    }
+
+    // A quick "on" and "off": the "off" comes while the "on" start runs.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_off_during_the_start_leaves_no_engine_running() {
+        let _ports = PORT_LOCK.lock().await;
+        let root = temp_dir("start-race");
+        let resources = root.join("resources");
+        let marker = root.join("started");
+        write_executable(
+            &resources
+                .join("headroom-runtime")
+                .join(bundled_binary_name()),
+            &format!("#!/bin/sh\ntouch '{}'\nsleep 1\nexit 1\n", marker.display()),
+        );
+        let manager = SidecarManager::new(0);
+        manager.set_resource_dir(resources);
+        manager.set_enabled(true);
+        let switch = manager.clone();
+        let seen = marker.clone();
+        let off = tokio::spawn(async move {
+            while !seen.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            switch.set_enabled(false);
+        });
+
+        let status = manager.start_if_it_should_run().await;
+        off.await.expect("the off task should finish");
+
+        assert!(status.is_none(), "{status:?}");
+        assert!(!manager.has_managed_child_slot());
+        assert!(matches!(
+            manager.current_status(),
+            SidecarStatus::Off { .. }
+        ));
         cleanup_dir(&root);
     }
 

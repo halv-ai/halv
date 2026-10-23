@@ -65,6 +65,10 @@ libc = "0.2"
 notify-rust = "4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The notification state (src/notification_permission.rs) needs a block for
+# the UserNotifications completion handler. Both crates already build in the
+# lock file, so this adds no new package.
+block2 = "0.6"
 objc2 = "0.6"
 
 # Sends a halv:// link from a second launch to the running app (ADR 0021).

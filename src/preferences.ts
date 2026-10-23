@@ -1,3 +1,15 @@
+import type { AppPreferences } from "./types.ts";
+
+/**
+ * The Dot pin shows only when the user turned it on. A missing key, a missing
+ * preferences object, or a failed load all read as hidden.
+ */
+export function dotShortcutVisible(
+  preferences: Partial<Pick<AppPreferences, "showDotShortcut">> | null | undefined,
+): boolean {
+  return preferences?.showDotShortcut === true;
+}
+
 export type SubagentConcurrencyParseResult =
   | { valid: true; limit: number | null }
   | { valid: false };

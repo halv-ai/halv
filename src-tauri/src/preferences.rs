@@ -94,6 +94,11 @@ pub struct AgentPreferences {
     pub keyboard_shortcuts: BTreeMap<String, String>,
     pub personality: Personality,
     pub ponytail: PonytailMode,
+    /// Turns on the Halv Engine (Headroom) for new sessions. Off sends every
+    /// pane lane direct to its upstream. A file without the key reads `false`.
+    pub headroom_enabled: bool,
+    /// Sends the Claude subscription lane through the Halv Engine. It applies
+    /// only while `headroom_enabled` is on. A file without the key reads `true`.
     pub claude_subscription_proxy: bool,
     pub memories_enabled: bool,
     pub task_routing: bool,
@@ -130,6 +135,17 @@ pub struct AgentPreferences {
     /// Each build profile reads only its own key, so a development relay URL never
     /// reaches a release build.
     pub remote_relay_url_dev: Option<String>,
+    /// Shows the Dot pin in the sidebar and the Dot entries in the command
+    /// palette. Off until the user turns it on. A missing key reads `false`.
+    pub show_dot_shortcut: bool,
+}
+
+impl AgentPreferences {
+    /// The Claude subscription lane uses the Halv Engine only when both the
+    /// master switch and the nested opt-in are on.
+    pub fn effective_claude_subscription_proxy(&self) -> bool {
+        self.headroom_enabled && self.claude_subscription_proxy
+    }
 }
 
 impl Default for AgentPreferences {
@@ -142,7 +158,8 @@ impl Default for AgentPreferences {
             keyboard_shortcuts: BTreeMap::new(),
             personality: Personality::None,
             ponytail: PonytailMode::Off,
-            claude_subscription_proxy: true,
+            headroom_enabled: false,
+            claude_subscription_proxy: false,
             memories_enabled: true,
             task_routing: true,
             worker_lane: WorkerLanePreference::Auto,
@@ -162,6 +179,7 @@ impl Default for AgentPreferences {
             remote_enabled: false,
             remote_relay_url: None,
             remote_relay_url_dev: None,
+            show_dot_shortcut: false,
         }
     }
 }
@@ -217,9 +235,15 @@ impl PreferencesManager {
         self.get().map(|preferences| preferences.ponytail)
     }
 
-    pub fn claude_subscription_proxy(&self) -> Result<bool, String> {
+    pub fn headroom_enabled(&self) -> Result<bool, String> {
+        self.get().map(|preferences| preferences.headroom_enabled)
+    }
+
+    /// The Claude subscription lane uses the Halv Engine only when both the
+    /// master switch and the nested opt-in are on.
+    pub fn effective_claude_subscription_proxy(&self) -> Result<bool, String> {
         self.get()
-            .map(|preferences| preferences.claude_subscription_proxy)
+            .map(|preferences| preferences.effective_claude_subscription_proxy())
     }
 
     pub fn memories_enabled(&self) -> Result<bool, String> {
@@ -354,6 +378,18 @@ impl PreferencesManager {
         Ok(next)
     }
 
+    pub fn set_headroom_enabled(&self, headroom_enabled: bool) -> Result<AgentPreferences, String> {
+        let mut current = self
+            .preferences
+            .write()
+            .map_err(|_| "Preferences lock is poisoned".to_string())?;
+        let mut next = current.clone();
+        next.headroom_enabled = headroom_enabled;
+        write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
+        *current = next.clone();
+        Ok(next)
+    }
+
     pub fn set_memories_enabled(&self, memories_enabled: bool) -> Result<AgentPreferences, String> {
         let mut current = self
             .preferences
@@ -397,6 +433,21 @@ impl PreferencesManager {
             .map_err(|_| "Preferences lock is poisoned".to_string())?;
         let mut next = current.clone();
         next.claude_ultracode = claude_ultracode;
+        write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
+        *current = next.clone();
+        Ok(next)
+    }
+
+    pub fn set_show_dot_shortcut(
+        &self,
+        show_dot_shortcut: bool,
+    ) -> Result<AgentPreferences, String> {
+        let mut current = self
+            .preferences
+            .write()
+            .map_err(|_| "Preferences lock is poisoned".to_string())?;
+        let mut next = current.clone();
+        next.show_dot_shortcut = show_dot_shortcut;
         write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
         *current = next.clone();
         Ok(next)
@@ -560,7 +611,10 @@ impl PreferencesManager {
 /// Reads a preferences file. A file without `analyticsConsent` comes from a
 /// version that sent usage events without asking (ADR 0021). A file without
 /// `analyticsConsentVersion` or `analyticsConsentAsked` comes from a version
-/// before ADR 0022.
+/// before ADR 0022. A file without `headroomEnabled` comes from 1.0.0 or
+/// older. It reads `false`: 1.0.1 turns the Halv Engine off for every install,
+/// because the engine kept crashing. A file without `claudeSubscriptionProxy`
+/// reads `true`, the old default. It has no effect while the engine is off.
 fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
     let mut value = serde_json::from_slice::<serde_json::Value>(contents)?;
     let has_consent = value.get("analyticsConsent").is_some();
@@ -570,6 +624,14 @@ fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
     // A value outside its range counts as a missing key, so a damaged value
     // never stops the app from starting.
     if let Some(object) = value.as_object_mut() {
+        for (key, missing) in [
+            ("headroomEnabled", false),
+            ("claudeSubscriptionProxy", true),
+        ] {
+            if !object.get(key).is_some_and(serde_json::Value::is_boolean) {
+                object.insert(key.to_string(), serde_json::Value::Bool(missing));
+            }
+        }
         for (key, max) in [("analyticsConsentVersion", 2), ("analyticsConsentAsked", 2)] {
             let valid = object
                 .get(key)
@@ -768,6 +830,26 @@ pub fn preferences_set_claude_subscription_proxy(
     manager.set_claude_subscription_proxy(claude_subscription_proxy)
 }
 
+/// Saves the Halv Engine switch. The change applies to new sessions only.
+/// On starts the engine now. Off keeps a running engine alive until quit, so
+/// running proxied panes keep working.
+#[tauri::command]
+pub fn preferences_set_headroom_enabled(
+    manager: tauri::State<'_, PreferencesManager>,
+    sidecar: tauri::State<'_, crate::sidecar::SidecarManager>,
+    headroom_enabled: bool,
+) -> Result<AgentPreferences, String> {
+    let saved = manager.set_headroom_enabled(headroom_enabled)?;
+    sidecar.set_enabled(headroom_enabled);
+    if headroom_enabled {
+        // `startup` reads the switch again before the child spawns, so a
+        // quick "off" after this "on" leaves no engine running.
+        let sidecar = sidecar.inner().clone();
+        tauri::async_runtime::spawn(async move { sidecar.startup().await });
+    }
+    Ok(saved)
+}
+
 #[tauri::command]
 pub fn preferences_set_memories_enabled(
     manager: tauri::State<'_, PreferencesManager>,
@@ -798,6 +880,14 @@ pub fn preferences_set_claude_ultracode(
     claude_ultracode: bool,
 ) -> Result<AgentPreferences, String> {
     manager.set_claude_ultracode(claude_ultracode)
+}
+
+#[tauri::command]
+pub fn preferences_set_show_dot_shortcut(
+    manager: tauri::State<'_, PreferencesManager>,
+    show_dot_shortcut: bool,
+) -> Result<AgentPreferences, String> {
+    manager.set_show_dot_shortcut(show_dot_shortcut)
 }
 
 #[tauri::command]
@@ -944,6 +1034,33 @@ mod tests {
         let saved = serde_json::to_value(reopened.get().unwrap()).unwrap();
         assert_eq!(saved["workflowRouting"], false);
         assert_eq!(saved["claudeUltracode"], true);
+    }
+
+    #[test]
+    fn dot_shortcut_is_hidden_by_default_and_persists_when_shown() {
+        assert!(!AgentPreferences::default().show_dot_shortcut);
+        // A preferences file from an older release has no key and reads false.
+        assert!(
+            !serde_json::from_str::<AgentPreferences>("{}")
+                .unwrap()
+                .show_dot_shortcut
+        );
+        assert!(
+            !serde_json::from_str::<AgentPreferences>(r#"{"remoteEnabled":true}"#)
+                .unwrap()
+                .show_dot_shortcut
+        );
+        let directory = TestDirectory::new("dot-shortcut");
+        let manager = PreferencesManager::open(&directory.0).unwrap();
+        assert!(!manager.get().unwrap().show_dot_shortcut);
+        manager.set_show_dot_shortcut(true).unwrap();
+        let reopened = PreferencesManager::open(&directory.0).unwrap();
+        assert!(reopened.get().unwrap().show_dot_shortcut);
+        let saved = serde_json::to_value(reopened.get().unwrap()).unwrap();
+        assert_eq!(saved["showDotShortcut"], true);
+        reopened.set_show_dot_shortcut(false).unwrap();
+        let reopened_off = PreferencesManager::open(&directory.0).unwrap();
+        assert!(!reopened_off.get().unwrap().show_dot_shortcut);
     }
 
     #[test]
@@ -1133,24 +1250,20 @@ mod tests {
     }
 
     #[test]
-    fn claude_subscription_proxy_roundtrips_and_defaults_on() {
+    fn claude_subscription_proxy_roundtrips_and_defaults_off() {
         let directory = TestDirectory::new("claude-subscription-proxy");
         let manager = PreferencesManager::open(&directory.0).expect("open preferences");
-        assert!(manager
-            .claude_subscription_proxy()
-            .expect("read default Claude subscription proxy preference"));
+        assert!(!manager.get().unwrap().claude_subscription_proxy);
 
         let saved = manager
-            .set_claude_subscription_proxy(false)
-            .expect("disable Claude subscription proxy");
-        assert!(!saved.claude_subscription_proxy);
+            .set_claude_subscription_proxy(true)
+            .expect("enable Claude subscription proxy");
+        assert!(saved.claude_subscription_proxy);
         let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
-        assert!(!reopened
-            .claude_subscription_proxy()
-            .expect("read persisted Claude subscription proxy preference"));
+        assert!(reopened.get().unwrap().claude_subscription_proxy);
 
-        let old: AgentPreferences = serde_json::from_str(
-            r#"{
+        let old = parse_preferences(
+            br#"{
                 "completionNotifications": "always",
                 "permissionNotifications": false,
                 "questionNotifications": true,
@@ -1160,20 +1273,120 @@ mod tests {
                 "memoriesEnabled": false
             }"#,
         )
-        .expect("deserialize old preferences");
+        .expect("parse old preferences");
         assert!(old.claude_subscription_proxy);
+        assert!(!old.headroom_enabled);
     }
 
     #[test]
     fn explicit_false_claude_subscription_proxy_overrides_default() {
-        let preferences: AgentPreferences = serde_json::from_str(
-            r#"{
+        let preferences = parse_preferences(
+            br#"{
                 "claudeSubscriptionProxy": false
             }"#,
         )
-        .expect("deserialize explicit Claude subscription proxy preference");
+        .expect("parse explicit Claude subscription proxy preference");
 
         assert!(!preferences.claude_subscription_proxy);
+        assert!(!preferences.headroom_enabled);
+        assert!(!preferences.effective_claude_subscription_proxy());
+    }
+
+    #[test]
+    fn a_new_install_has_the_halv_engine_off() {
+        let directory = TestDirectory::new("headroom-new-install");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        let preferences = manager.get().unwrap();
+
+        assert!(!preferences.headroom_enabled);
+        assert!(!preferences.claude_subscription_proxy);
+        assert!(!manager.headroom_enabled().unwrap());
+        assert!(!manager.effective_claude_subscription_proxy().unwrap());
+    }
+
+    #[test]
+    fn a_file_without_the_engine_key_turns_the_engine_off() {
+        // A 1.0.0 file holds the whole struct but no `headroomEnabled` key.
+        // 1.0.1 turns the engine off for it. The subscription opt-in keeps
+        // its stored value, but it has no effect while the engine is off.
+        for (subscription, expected_subscription) in
+            [(Some(true), true), (Some(false), false), (None, true)]
+        {
+            let directory = TestDirectory::new("headroom-migration");
+            let mut file = serde_json::json!({
+                "personality": "friendly",
+                "analyticsConsent": "off",
+            });
+            if let Some(value) = subscription {
+                file["claudeSubscriptionProxy"] = serde_json::Value::Bool(value);
+            }
+            fs::write(
+                directory.0.join(PREFERENCES_FILE_NAME),
+                serde_json::to_vec(&file).unwrap(),
+            )
+            .unwrap();
+
+            let manager = PreferencesManager::open(&directory.0).expect("open old preferences");
+            let preferences = manager.get().unwrap();
+            assert!(!preferences.headroom_enabled);
+            assert_eq!(preferences.claude_subscription_proxy, expected_subscription);
+            assert!(!preferences.effective_claude_subscription_proxy());
+            assert!(!manager.effective_claude_subscription_proxy().unwrap());
+        }
+        // A damaged value counts as a missing key.
+        let damaged = parse_preferences(br#"{ "headroomEnabled": "yes" }"#)
+            .expect("a damaged engine value must not stop the app");
+        assert!(!damaged.headroom_enabled);
+        assert!(damaged.claude_subscription_proxy);
+    }
+
+    #[test]
+    fn an_explicit_engine_value_keeps_its_value() {
+        for value in [true, false] {
+            let preferences = parse_preferences(
+                format!(r#"{{ "headroomEnabled": {value}, "claudeSubscriptionProxy": true }}"#)
+                    .as_bytes(),
+            )
+            .expect("parse an explicit engine value");
+            assert_eq!(preferences.headroom_enabled, value);
+            assert_eq!(preferences.effective_claude_subscription_proxy(), value);
+        }
+    }
+
+    #[test]
+    fn an_explicit_engine_choice_survives_reopen_and_other_saves() {
+        let directory = TestDirectory::new("headroom-explicit");
+        fs::write(
+            directory.0.join(PREFERENCES_FILE_NAME),
+            br#"{ "headroomEnabled": false, "claudeSubscriptionProxy": true }"#,
+        )
+        .unwrap();
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        assert!(!manager.headroom_enabled().unwrap());
+        // The nested opt-in applies only while the master switch is on.
+        assert!(!manager.effective_claude_subscription_proxy().unwrap());
+
+        let saved = manager
+            .set_headroom_enabled(true)
+            .expect("turn the engine on");
+        assert!(saved.headroom_enabled);
+        assert!(manager.effective_claude_subscription_proxy().unwrap());
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert!(reopened.headroom_enabled().unwrap());
+
+        reopened
+            .set_headroom_enabled(false)
+            .expect("turn the engine off");
+        reopened
+            .set_memories_enabled(false)
+            .expect("save an unrelated preference");
+        let reopened_off = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert!(!reopened_off.headroom_enabled().unwrap());
+        let file: serde_json::Value =
+            serde_json::from_slice(&fs::read(directory.0.join(PREFERENCES_FILE_NAME)).unwrap())
+                .unwrap();
+        assert_eq!(file["headroomEnabled"], false);
+        assert_eq!(file["claudeSubscriptionProxy"], true);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { terminalActivityStore } from "../terminalActivityStore";
 import { ipc } from "../ipc.ts";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatRelativeTime } from "../format";
 import {
   conversationDisplayTitle,
@@ -97,6 +97,8 @@ export type ThreadSidebarProjectTree = {
 
 type ThreadSidebarProps = {
   projectTree?: ThreadSidebarProjectTree | null;
+  /** The attention queue dock. It sits at the bottom of the expanded sidebar. */
+  queueDock?: ReactNode;
   conversations: ConversationSummary[];
   projects: Project[];
   currentConversationId: string | null;
@@ -110,6 +112,8 @@ type ThreadSidebarProps = {
   onNewConversation: () => void;
   onOpenDot: () => void;
   dotOpen: boolean;
+  /** Shows the Dot pin. The user turns it on in Settings. */
+  showDot: boolean;
   onOpenSettings: () => void;
   onLoadConversation: (conversationId: string) => void;
   onFocusTerminal: (sessionId: string) => void;
@@ -135,6 +139,7 @@ type ThreadSidebarProps = {
 
 export function ThreadSidebar({
   projectTree = null,
+  queueDock = null,
   conversations,
   projects,
   currentConversationId,
@@ -148,6 +153,7 @@ export function ThreadSidebar({
   onNewConversation,
   onOpenDot,
   dotOpen,
+  showDot,
   onOpenSettings,
   onLoadConversation,
   onFocusTerminal,
@@ -421,7 +427,7 @@ export function ThreadSidebar({
             <span aria-hidden className="text-base">{"\u2315"}</span>
           </button>
         </div>
-        <DotShortcut compact onOpen={onOpenDot} active={dotOpen} />
+        {showDot && <DotShortcut compact onOpen={onOpenDot} active={dotOpen} />}
         <nav className="sidebar-pinned-rail" aria-label={t("Pinned")}>
           {pinnedConversations(activeConversations).map((conversation) => {
             const title = conversationDisplayTitle(
@@ -498,7 +504,7 @@ export function ThreadSidebar({
           </button>
         </div>
 
-        <div className="mt-3"><DotShortcut onOpen={onOpenDot} active={dotOpen} /></div>
+        {showDot && <div className="mt-3"><DotShortcut onOpen={onOpenDot} active={dotOpen} /></div>}
         <div className="mt-3">
           <input
             aria-label={t("Search conversations")}
@@ -1010,6 +1016,7 @@ export function ThreadSidebar({
         ) : null}
         </nav>
       </div>
+      {queueDock}
     </aside>
   );
 }

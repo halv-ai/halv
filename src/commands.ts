@@ -41,6 +41,12 @@ export type CommandHandlerContext = {
   completedTurns: number;
   chatMode: ChatMode;
   workflowMode: WorkflowMode;
+  /**
+   * The Halv Engine switch is off and the engine reports no error. The
+   * restart command then stays unavailable, so it never starts the engine
+   * behind the switch.
+   */
+  halvEngineOff?: boolean;
   setDraft: (draft: string) => void;
   setModel: (model: string) => void;
   setEffort: (effort: string) => void;
@@ -143,6 +149,8 @@ export function commandUnavailableReasonLabel(reason: string, t: Translate) {
       return t("No persisted user turn is available to fork");
     case "Choose Auto or Ask first":
       return t("Choose Auto or Ask first");
+    case "Halv Engine is off. Turn it on in Settings.":
+      return t("Halv Engine is off. Turn it on in Settings.");
     default:
       return reason;
   }
@@ -688,6 +696,11 @@ export const commandRegistry: CommandRegistryEntry[] = [
     category: "Application",
     aliases: ["restart-headroom"],
     keywords: ["repair", "sidecar"],
+    unavailableReason(context) {
+      return context.halvEngineOff
+        ? "Halv Engine is off. Turn it on in Settings."
+        : null;
+    },
     async handler({ restartProxy }) {
       await restartProxy();
     },

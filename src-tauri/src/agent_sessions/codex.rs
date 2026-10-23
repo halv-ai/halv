@@ -35,7 +35,9 @@ const INITIALIZE_REQUEST_ID: u64 = 1;
 const THREAD_REQUEST_ID: u64 = 2;
 pub(super) const FIRST_TURN_REQUEST_ID: usize = 3;
 
-pub(super) fn prepare_nested_home(port: u16, project: &str) -> Result<PathBuf, String> {
+/// `port` is `None` when the Halv Engine is off. The home then gets no Halv
+/// provider block, and nested workers use the provider of the user's config.
+pub(super) fn prepare_nested_home(port: Option<u16>, project: &str) -> Result<PathBuf, String> {
     // The nested home mirrors the active wallet account, so a nested Codex
     // worker uses the same login as a direct Codex launch.
     prepare_nested_home_from(codex_home(), port, project)
@@ -43,7 +45,7 @@ pub(super) fn prepare_nested_home(port: u16, project: &str) -> Result<PathBuf, S
 
 fn prepare_nested_home_from(
     source_home: Option<PathBuf>,
-    port: u16,
+    port: Option<u16>,
     project: &str,
 ) -> Result<PathBuf, String> {
     let session_home =
@@ -64,7 +66,9 @@ fn prepare_nested_home_from(
             .and_then(|path| fs::read_to_string(path).ok())
             .and_then(|content| content.parse::<toml::Table>().ok())
             .unwrap_or_default();
-        configure_nested_provider(&mut config, port);
+        if let Some(port) = port {
+            configure_nested_provider(&mut config, port);
+        }
         let config_text = toml::to_string_pretty(&config)
             .map_err(|error| format!("failed to encode the session Codex config: {error}"))?;
         let config_path = session_home.join("config.toml");
@@ -1333,10 +1337,8 @@ fn invocation_args(
     }
     match lane {
         SessionLane::CodexChatGpt { proxied } => {
-            if *proxied {
-                let port = headroom_port.ok_or_else(|| {
-                    "the proxied Codex ChatGPT lane requires a managed Headroom port".to_string()
-                })?;
+            // No port means the Halv Engine is off. The lane then goes direct.
+            if let Some(port) = headroom_port.filter(|_| *proxied) {
                 // The user's config.toml can select a custom model provider
                 // (for example an RTK "headroom" provider) whose base_url has
                 // no session prefix. openai_base_url only overrides the
@@ -1361,10 +1363,8 @@ fn invocation_args(
                 .rev()
                 .find(|(name, _)| name == "OPENAI_API_KEY")
                 .is_some_and(|(_, value)| !value.trim().is_empty());
-            if has_openai_api_key {
-                let port = headroom_port.ok_or_else(|| {
-                    "the Codex Custom API-key lane requires a managed Headroom port".to_string()
-                })?;
+            // No port means the Halv Engine is off. The lane then goes direct.
+            if let Some(port) = headroom_port.filter(|_| has_openai_api_key) {
                 // User config can select another provider.
                 // Force OpenAI so this API-key lane reaches the session proxy.
                 args.push(OsString::from("-c"));
@@ -2374,7 +2374,7 @@ mod tests {
             .expect("source config should write");
         fs::write(source.join("auth.json"), "{}").expect("source auth should write");
 
-        let home = prepare_nested_home_from(Some(source.clone()), 9123, &session_id)
+        let home = prepare_nested_home_from(Some(source.clone()), Some(9123), &session_id)
             .expect("nested Codex home should be prepared");
 
         assert_eq!(
@@ -2770,6 +2770,80 @@ mod tests {
                 assert_eq!(&args[args.len() - 2..], &["resume", session_id]);
             }
         }
+    }
+
+    #[test]
+    fn lanes_go_direct_when_the_halv_engine_is_off() {
+        let custom = SessionLane::Custom {
+            env: vec![("OPENAI_API_KEY".to_string(), "openai-test-key".to_string())],
+        };
+        for lane in [SessionLane::CodexChatGpt { proxied: true }, custom.clone()] {
+            let direct = invocation_args(
+                &lane,
+                "ask",
+                None,
+                "session-123",
+                Path::new("/tmp/halv.sqlite3"),
+                PonytailMode::Off,
+                TaskRoutingContext::default(),
+                true,
+            )
+            .expect("a lane without an engine port should build");
+            assert!(!direct.iter().any(|arg| {
+                let arg = arg.to_string_lossy();
+                arg.starts_with("openai_base_url=") || arg == r#"model_provider="openai""#
+            }));
+            assert!(!direct
+                .iter()
+                .any(|arg| arg.to_string_lossy() == "features.apps=false"));
+        }
+
+        let proxied = invocation_args(
+            &custom,
+            "ask",
+            Some(9123),
+            "session-123",
+            Path::new("/tmp/halv.sqlite3"),
+            PonytailMode::Off,
+            TaskRoutingContext::default(),
+            true,
+        )
+        .expect("a proxied Custom API-key lane should build");
+        assert!(proxied.iter().any(|arg| {
+            arg.to_string_lossy() == r#"openai_base_url="http://127.0.0.1:9123/p/session-123/v1""#
+        }));
+    }
+
+    #[test]
+    fn nested_home_without_a_port_has_no_halv_provider() {
+        let session_id = format!("nested-home-direct-{}", crate::storage::new_uuid_v4());
+        let source = env::temp_dir().join(format!(
+            "halv-codex-source-{}",
+            crate::storage::new_uuid_v4()
+        ));
+        fs::create_dir_all(&source).expect("source Codex home should exist");
+        fs::write(source.join("config.toml"), "model = \"gpt-test\"\n")
+            .expect("source config should write");
+        fs::write(source.join("auth.json"), "{}").expect("source auth should write");
+
+        let home = prepare_nested_home_from(Some(source.clone()), None, &session_id)
+            .expect("nested Codex home should be prepared");
+        let config = fs::read_to_string(home.join("config.toml"))
+            .expect("nested config should read")
+            .parse::<toml::Table>()
+            .expect("nested config should parse");
+
+        assert_eq!(
+            config.get("model").and_then(toml::Value::as_str),
+            Some("gpt-test")
+        );
+        assert!(config.get("model_provider").is_none());
+        assert!(config.get("openai_base_url").is_none());
+        assert!(config.get("model_providers").is_none());
+        assert!(home.join("auth.json").exists());
+
+        session_files::remove(&session_id);
+        fs::remove_dir_all(source).expect("source Codex home should be removable");
     }
 
     #[test]

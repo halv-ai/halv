@@ -6,6 +6,7 @@ import {
   NEEDS_INPUT_NOTIFY_DELAY_MS,
   createAgentStatusNotifier,
   paneNotificationFor,
+  paneNotificationStillDue,
 } from "../src/agentStatusNotifications.ts";
 
 function view(overrides: Partial<AgentPaneView> = {}): AgentPaneView {
@@ -92,7 +93,7 @@ test("an unread result earns a completion banner, a read one does not", () => {
   flush();
   change("third", view({ status: "failed", unread: true, turnSeq: 2 }));
   flush();
-  assert.deepEqual(delivered, ["pane:completion:done", "third:completion:failed"]);
+  assert.deepEqual(delivered, ["pane:completion:done", "third:error:failed"]);
 });
 
 test("the pane the user looks at gets no banner", () => {
@@ -177,4 +178,24 @@ test("a Codex wait from a terminal notification earns a banner", () => {
     ),
     { kind: "permission", key: "wait:terminal:1", delayMs: NEEDS_INPUT_NOTIFY_DELAY_MS },
   );
+});
+
+test("a failed turn earns an error banner with the completion delay", () => {
+  const failed = view({ status: "failed", unread: true, turnSeq: 4, source: "terminal" });
+  const banner = paneNotificationFor(null, failed);
+  assert.equal(banner?.kind, "error");
+  assert.equal(banner?.delayMs, COMPLETION_NOTIFY_DELAY_MS);
+  assert.equal(paneNotificationFor(failed, failed), null);
+  assert.ok(banner);
+  assert.equal(paneNotificationStillDue(banner, failed), true);
+  assert.equal(paneNotificationStillDue(banner, { ...failed, unread: false }), false);
+  assert.equal(paneNotificationStillDue(banner, { ...failed, status: "done" }), false);
+  assert.equal(paneNotificationStillDue(banner, null), false);
+});
+
+test("a finished turn and a failed turn of one sequence use different keys", () => {
+  const done = paneNotificationFor(null, view({ status: "done", unread: true, turnSeq: 4, source: "terminal" }));
+  const failed = paneNotificationFor(null, view({ status: "failed", unread: true, turnSeq: 4, source: "terminal" }));
+  assert.equal(done?.kind, "completion");
+  assert.notEqual(done?.key, failed?.key);
 });

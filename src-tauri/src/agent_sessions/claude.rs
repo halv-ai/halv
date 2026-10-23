@@ -1295,24 +1295,13 @@ fn apply_lane_environment(
             if api_key.is_empty() {
                 return Err("the Claude API key cannot be empty".to_string());
             }
-            let port = proxy_port.ok_or_else(|| {
-                "the Claude API-key lane requires a managed Headroom proxy".to_string()
-            })?;
             let upstream = base_url
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or(ANTHROPIC_DEFAULT_BASE_URL);
-            command
-                .env("ANTHROPIC_API_KEY", api_key)
-                .env(
-                    "ANTHROPIC_BASE_URL",
-                    format!("http://127.0.0.1:{port}/p/{project}"),
-                )
-                .env(
-                    "ANTHROPIC_CUSTOM_HEADERS",
-                    format!("X-Headroom-Base-Url: {upstream}"),
-                );
+            command.env("ANTHROPIC_API_KEY", api_key);
+            apply_anthropic_route(command, proxy_port, project, upstream);
         }
         SessionLane::CodexChatGpt { .. } => {
             return Err("the Codex ChatGPT lane cannot be used with Claude".to_string());
@@ -1325,20 +1314,11 @@ fn apply_lane_environment(
             if api_key.is_empty() {
                 return Err("the GLM Coding Plan API key cannot be empty".to_string());
             }
-            let port = proxy_port.ok_or_else(|| {
-                "the GLM Coding Plan lane requires a managed Headroom proxy".to_string()
-            })?;
             command
                 .env_remove("ANTHROPIC_API_KEY")
-                .env("ANTHROPIC_AUTH_TOKEN", api_key)
-                .env(
-                    "ANTHROPIC_BASE_URL",
-                    format!("http://127.0.0.1:{port}/p/{project}"),
-                )
-                .env(
-                    "ANTHROPIC_CUSTOM_HEADERS",
-                    format!("X-Headroom-Base-Url: {ZAI_ANTHROPIC_BASE_URL}"),
-                )
+                .env("ANTHROPIC_AUTH_TOKEN", api_key);
+            apply_anthropic_route(command, proxy_port, project, ZAI_ANTHROPIC_BASE_URL);
+            command
                 .env("API_TIMEOUT_MS", "3000000")
                 .env(
                     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -1376,19 +1356,11 @@ fn apply_lane_environment(
             if api_key.is_empty() {
                 return Err("the Grok API key cannot be empty".to_string());
             }
-            let port = proxy_port
-                .ok_or_else(|| "the Grok lane requires a managed Headroom proxy".to_string())?;
             command
                 .env_remove("ANTHROPIC_API_KEY")
-                .env("ANTHROPIC_AUTH_TOKEN", api_key)
-                .env(
-                    "ANTHROPIC_BASE_URL",
-                    format!("http://127.0.0.1:{port}/p/{project}"),
-                )
-                .env(
-                    "ANTHROPIC_CUSTOM_HEADERS",
-                    format!("X-Headroom-Base-Url: {GROK_ANTHROPIC_BASE_URL}"),
-                )
+                .env("ANTHROPIC_AUTH_TOKEN", api_key);
+            apply_anthropic_route(command, proxy_port, project, GROK_ANTHROPIC_BASE_URL);
+            command
                 .env("API_TIMEOUT_MS", "3000000")
                 .env(
                     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -1438,6 +1410,32 @@ fn apply_lane_environment(
         command.env("CODEX_HOME", codex_home);
     }
     Ok(())
+}
+
+/// Points an Anthropic-format lane at the session prefix of the Halv Engine.
+/// No port means the engine is off, so the lane goes direct to `upstream`.
+fn apply_anthropic_route(
+    command: &mut Command,
+    proxy_port: Option<u16>,
+    project: &str,
+    upstream: &str,
+) {
+    match proxy_port {
+        Some(port) => {
+            command
+                .env(
+                    "ANTHROPIC_BASE_URL",
+                    format!("http://127.0.0.1:{port}/p/{project}"),
+                )
+                .env(
+                    "ANTHROPIC_CUSTOM_HEADERS",
+                    format!("X-Headroom-Base-Url: {upstream}"),
+                );
+        }
+        None => {
+            command.env("ANTHROPIC_BASE_URL", upstream);
+        }
+    }
 }
 
 fn model_override<'a>(value: Option<&'a str>, default: &'a str) -> &'a str {
@@ -3210,6 +3208,91 @@ mod tests {
         assert!(command.get_envs().any(|(name, value)| {
             name == std::ffi::OsStr::new("ANTHROPIC_API_KEY") && value.is_none()
         }));
+    }
+
+    #[test]
+    fn proxy_lanes_go_direct_when_the_halv_engine_is_off() {
+        let credential = |api_key: &str| super::super::SessionCredential::ApiKey {
+            api_key: api_key.to_string(),
+        };
+        let cases = [
+            (
+                SessionLane::ClaudeApiKey {
+                    credential: credential("anthropic-test-key"),
+                    base_url: None,
+                },
+                ANTHROPIC_DEFAULT_BASE_URL,
+            ),
+            (
+                SessionLane::ClaudeApiKey {
+                    credential: credential("anthropic-test-key"),
+                    base_url: Some(" https://anthropic.example/v1 ".to_string()),
+                },
+                "https://anthropic.example/v1",
+            ),
+            (
+                SessionLane::ZaiGlm {
+                    credential: credential("zai-test-key"),
+                    model_overrides: None,
+                },
+                ZAI_ANTHROPIC_BASE_URL,
+            ),
+            (
+                SessionLane::GrokApiKey {
+                    credential: credential("xai-test-key"),
+                    model_overrides: None,
+                },
+                GROK_ANTHROPIC_BASE_URL,
+            ),
+        ];
+        for (lane, upstream) in cases {
+            let command = gui_command_with_program(
+                PathBuf::from("/tmp/claude"),
+                Path::new("/tmp"),
+                &lane,
+                "default",
+                None,
+                None,
+                "session-123",
+                Path::new("/tmp/halv.sqlite3"),
+                None,
+                None,
+                None,
+                PonytailMode::Off,
+            )
+            .expect("a lane without an engine port should build");
+
+            assert_eq!(command_env(&command, "ANTHROPIC_BASE_URL"), Some(upstream));
+            assert_eq!(command_env(&command, "ANTHROPIC_CUSTOM_HEADERS"), None);
+            match lane {
+                SessionLane::ClaudeApiKey { .. } => assert_eq!(
+                    command_env(&command, "ANTHROPIC_API_KEY"),
+                    Some("anthropic-test-key")
+                ),
+                SessionLane::ZaiGlm { .. } => {
+                    assert_eq!(
+                        command_env(&command, "ANTHROPIC_AUTH_TOKEN"),
+                        Some("zai-test-key")
+                    );
+                    assert_eq!(command_env(&command, "API_TIMEOUT_MS"), Some("3000000"));
+                    assert_eq!(
+                        command_env(&command, "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+                        Some(ZAI_DEFAULT_OPUS_MODEL)
+                    );
+                }
+                _ => {
+                    assert_eq!(
+                        command_env(&command, "ANTHROPIC_AUTH_TOKEN"),
+                        Some("xai-test-key")
+                    );
+                    assert_eq!(command_env(&command, "API_TIMEOUT_MS"), Some("3000000"));
+                    assert_eq!(
+                        command_env(&command, "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+                        Some(GROK_DEFAULT_OPUS_MODEL)
+                    );
+                }
+            }
+        }
     }
 
     fn command_env<'a>(command: &'a Command, name: &str) -> Option<&'a str> {

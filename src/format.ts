@@ -105,6 +105,8 @@ export function formatEngineStatus(sidecar: SidecarStatus | null) {
       return sidecar.installHint;
     case "error":
       return `error: ${sidecar.message}`;
+    case "off":
+      return "off";
   }
 }
 

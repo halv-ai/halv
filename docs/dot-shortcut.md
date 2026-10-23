@@ -2,6 +2,7 @@
 
 The fixed Dot pin opens a native child WebView inside Halv's main window,
 loading `https://chatgpt.com/dots`. It does not open the installed ChatGPT app.
+The pin is off by default. Turn it on in Settings > Preferences > Dot > "Show Dot in the sidebar" (`showDotShortcut`). Turning it off closes an open Dot panel.
 The same ChatGPT account can access its existing cloud Dot after signing in.
 Halv does not import the desktop app's cookies, credentials, name, or avatar.
 

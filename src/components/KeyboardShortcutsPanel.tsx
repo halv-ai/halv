@@ -420,6 +420,8 @@ function shortcutLabel(definition: ShortcutDefinition, t: Translate) {
       return t("Previous pinned conversation");
     case "task.next_pinned":
       return t("Next pinned conversation");
+    case "task.next_in_queue":
+      return t("Open next in queue");
     case "input.dictation":
       return t("Dictation");
     default:
@@ -496,6 +498,8 @@ function shortcutDescription(definition: ShortcutDefinition, t: Translate) {
       return t("Cycle to the previous pinned conversation.");
     case "task.next_pinned":
       return t("Cycle to the next pinned conversation.");
+    case "task.next_in_queue":
+      return t("Open the oldest item that waits for you or has an unread result.");
     case "input.dictation":
       return t("Start or stop speech dictation in the composer.");
     default:

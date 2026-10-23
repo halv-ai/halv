@@ -906,6 +906,8 @@ function sidecarFixture(fixture: HarnessFixtureConfig["sidecar"]): SidecarStatus
       };
     case "error":
       return { state: "error", message: PAUSED_RESTARTS_MESSAGE, port: 8787 };
+    case "off":
+      return { state: "off", port: 8787 };
   }
 }
 

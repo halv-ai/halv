@@ -22,6 +22,8 @@ pub mod host_env;
 mod local_environments;
 mod locale;
 mod main_window;
+mod notification_log;
+mod notification_permission;
 mod ponytail;
 mod preferences;
 mod pricing;
@@ -130,7 +132,9 @@ pub fn run() {
             agent_sessions::session_files::spawn_stale_cleanup(&storage);
             app.manage(storage);
             let preferences = preferences::PreferencesManager::open(&app_data_dir)?;
-            let claude_subscription_proxy = preferences.claude_subscription_proxy()?;
+            let headroom_enabled = preferences.headroom_enabled()?;
+            // Off stops the launch start and gives the `Off` status.
+            sidecar_manager.set_enabled(headroom_enabled);
             app.manage(preferences);
             app.manage(analytics::AnalyticsManager::open(&app_data_dir)?);
             analytics::listen_for_download_links(app.handle());
@@ -148,13 +152,19 @@ pub fn run() {
             {
                 app.state::<terminal::TerminalManager>()
                     .adopt_supervised_sessions(app.handle());
+                // Rows from 1.0.0 or older read the stored opt-in, not the
+                // effective one: the engine was always on then.
+                let legacy_claude_subscription_proxy = app
+                    .state::<preferences::PreferencesManager>()
+                    .get()?
+                    .claude_subscription_proxy;
                 if let Err(error) = app
                     .state::<agent_sessions::AgentSessionManager>()
                     .rehydrate_supervised(
                         app.handle(),
                         &app.state::<storage::Storage>(),
                         &app.state::<terminal::TerminalManager>(),
-                        claude_subscription_proxy,
+                        legacy_claude_subscription_proxy,
                     )
                 {
                     eprintln!("failed to rehydrate supervised agent sessions: {error}");
@@ -195,9 +205,13 @@ pub fn run() {
             pricing::refresh::spawn(app.handle().clone());
             // The Headroom proxy never pauses for the plan of the account
             // (ADR 0021), so startup does not read the cached entitlements.
-            tauri::async_runtime::spawn(async move {
-                sidecar_manager.startup().await;
-            });
+            // With the Halv Engine off, the launch starts no engine, unless
+            // restored sessions point at its port (`rehydrate_supervised`).
+            if sidecar_manager.should_run() {
+                tauri::async_runtime::spawn(async move {
+                    sidecar_manager.startup().await;
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -318,11 +332,13 @@ pub fn run() {
             preferences::preferences_set_personality,
             preferences::preferences_set_ponytail,
             preferences::preferences_set_claude_subscription_proxy,
+            preferences::preferences_set_headroom_enabled,
             preferences::preferences_set_memories_enabled,
             preferences::preferences_set_task_routing,
             preferences::preferences_set_worker_lane,
             preferences::preferences_set_workflow_routing,
             preferences::preferences_set_claude_ultracode,
+            preferences::preferences_set_show_dot_shortcut,
             preferences::preferences_set_routing_tier_agents,
             preferences::preferences_set_analytics_enabled,
             preferences::preferences_set_analytics_consent,
@@ -367,6 +383,7 @@ pub fn run() {
             browser::browser_settings_set,
             browser::browser_clear_data,
             sidecar::sidecar_status,
+            sidecar::sidecar_runs_for_restored_sessions,
             sidecar::sidecar_stats,
             sidecar::sidecar_restart,
             sidecar::sidecar_install_headroom,
@@ -487,7 +504,10 @@ pub fn run() {
             agent_status::agent_status_snapshot,
             agent_status::agent_status_mark_viewed,
             agent_status::agent_status_set_focus,
-            agent_status::notify::terminal_notify
+            agent_status::notify::terminal_notify,
+            notification_permission::notification_permission_state,
+            notification_permission::notification_request_permission,
+            notification_permission::notification_open_system_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building Halv")

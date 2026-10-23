@@ -85,22 +85,34 @@ test("centers the connect gate content column", () => {
   assert.match(component, /className="mx-auto my-auto flex w-full max-w-\[560px\]/);
 });
 
-test("Claude subscription connection surfaces the optional proxy preference", () => {
+test("the gate offers Halv Engine to every lane, unchecked", () => {
   const component = readFileSync(
     new URL("../src/components/ConnectGate.tsx", import.meta.url),
     "utf8",
   );
+
+  assert.match(component, /useState\(false\);\n\s+const \[headroomEnabledLoaded/);
+  assert.match(component, /ipc\.preferences\.setHeadroomEnabled\(/);
+  assert.match(component, /Use Halv Engine to compress context \(optional\)/);
+  assert.doesNotMatch(component, /claudeSubscriptionConnected/);
+  assert.doesNotMatch(component, /Route Claude subscription through Halv Engine/);
+});
+
+test("Settings nests the Claude subscription route under Halv Engine", () => {
   const settings = readFileSync(
     new URL("../src/components/SettingsPanel.tsx", import.meta.url),
     "utf8",
   );
 
-  assert.match(component, /\{claudeSubscriptionConnected \? \(/);
-  assert.match(component, /Route Claude subscription through Halv Engine/);
-  assert.match(component, /t\("Learn more"\)/);
-  assert.match(component, /Anthropic's consumer terms/);
+  assert.match(settings, /ipc\.preferences\.setHeadroomEnabled\(/);
   assert.match(settings, /ipc\.preferences\.setClaudeSubscriptionProxy/);
+  assert.match(
+    settings,
+    /\{headroomEnabled \? \(\s*<div[^>]*>\s*<label[^>]*>\s*<input\s+aria-describedby="claude-subscription-proxy-warning"/,
+  );
+  assert.match(settings, /Anthropic's consumer terms/);
   assert.match(settings, /Only affects new terminal\s+sessions\./);
+  assert.match(settings, /While it is off, Chat mode still starts Halv Engine/);
 });
 
 test("provider terminal agents need their agent CLI to run", () => {

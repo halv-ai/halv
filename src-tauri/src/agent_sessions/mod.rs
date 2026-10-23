@@ -1212,12 +1212,127 @@ struct AgentSessionEvent {
     event: AgentEvent,
 }
 
+/// How a launched session uses the Halv Engine. Halv saves it in the session
+/// row, so the next launch knows which restored sessions need the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeadroomRoute {
+    /// Nothing in the session environment points at an engine.
+    Direct,
+    /// The session traffic goes through the shared engine.
+    Engine,
+    /// The session traffic goes direct, but its nested Codex home routes
+    /// the JEV Codex workers through the shared engine.
+    Workers,
+    /// The session traffic goes through an isolated engine (Kimi). That
+    /// engine stops with the app and its port is not saved.
+    Isolated,
+}
+
+impl HeadroomRoute {
+    fn storage_name(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Engine => "engine",
+            Self::Workers => "workers",
+            Self::Isolated => "isolated",
+        }
+    }
+
+    fn from_storage_name(value: &str) -> Option<Self> {
+        match value {
+            "direct" => Some(Self::Direct),
+            "engine" => Some(Self::Engine),
+            "workers" => Some(Self::Workers),
+            "isolated" => Some(Self::Isolated),
+            _ => None,
+        }
+    }
+
+    /// The route of a launch: `meter` is the Headroom meter of the session
+    /// and `proxy_source` tells if the session traffic goes through it.
+    fn of_launch(meter: Option<&SessionSavingsMeter>, proxy_source: bool) -> Self {
+        match meter {
+            None => Self::Direct,
+            Some(meter) if meter.shutdown_on_exit => Self::Isolated,
+            Some(_) if proxy_source => Self::Engine,
+            Some(_) => Self::Workers,
+        }
+    }
+
+    /// The route of a row from 1.0.0 or older. The engine was always on
+    /// then, so the lane and the stored subscription opt-in tell the route.
+    fn legacy(
+        agent_kind: AgentKind,
+        lane_kind: SessionLaneKind,
+        claude_subscription_proxy: bool,
+    ) -> Self {
+        match (agent_kind, lane_kind) {
+            (AgentKind::Kimi, SessionLaneKind::KimiApiKey | SessionLaneKind::KimiSubscription) => {
+                Self::Isolated
+            }
+            (AgentKind::Codex, SessionLaneKind::CodexChatGpt)
+            | (
+                AgentKind::Claude | AgentKind::Zai,
+                SessionLaneKind::ClaudeApiKey | SessionLaneKind::ZaiGlm | SessionLaneKind::Custom,
+            )
+            | (AgentKind::Grok, SessionLaneKind::GrokApiKey) => Self::Engine,
+            (AgentKind::Claude | AgentKind::Zai, SessionLaneKind::ClaudeSubscription) => {
+                if claude_subscription_proxy {
+                    Self::Engine
+                } else {
+                    Self::Workers
+                }
+            }
+            _ => Self::Direct,
+        }
+    }
+
+    /// True when something in the session environment points at the port of
+    /// the shared engine, so a restored session needs it to run.
+    fn needs_shared_engine(self) -> bool {
+        matches!(self, Self::Engine | Self::Workers)
+    }
+
+    /// The proxy source of the savings meter.
+    fn proxy_source(self) -> bool {
+        matches!(self, Self::Engine | Self::Isolated)
+    }
+}
+
+/// The Halv Engine route of one session. With the engine off, `sidecar` and
+/// `port` are `None`: the lane goes direct to its upstream, and the context
+/// only holds the nested Codex home that measures JEV worker usage.
 #[derive(Clone)]
 struct SessionProxyContext {
-    sidecar: SidecarManager,
-    port: u16,
+    sidecar: Option<SidecarManager>,
+    port: Option<u16>,
     shutdown_on_exit: bool,
     nested_codex_home: Option<PathBuf>,
+}
+
+impl SessionProxyContext {
+    fn direct() -> Self {
+        Self {
+            sidecar: None,
+            port: None,
+            shutdown_on_exit: false,
+            nested_codex_home: None,
+        }
+    }
+
+    fn routed(&self) -> bool {
+        self.port.is_some()
+    }
+
+    /// A Headroom meter exists only when the session uses an engine.
+    fn savings_meter(&self, project: &str) -> Option<SessionSavingsMeter> {
+        self.sidecar.clone().map(|sidecar| SessionSavingsMeter {
+            sidecar,
+            project: project.to_string(),
+            before: Mutex::new(None),
+            shutdown_on_exit: self.shutdown_on_exit,
+        })
+    }
 }
 
 struct SessionSavingsMeter {
@@ -1726,6 +1841,11 @@ impl ManagedAgentSession {
             crate::storage::savings_dollars::lane_billing(snapshot.lane_kind.storage_name());
         if let Err(error) = storage.set_agent_session_billing(&id, billing) {
             eprintln!("failed to save the billing of agent session `{id}`: {error}");
+        }
+        let route =
+            HeadroomRoute::of_launch(self.savings_meter.as_ref(), snapshot.savings_sources.proxy);
+        if let Err(error) = storage.set_agent_session_headroom_route(&id, route.storage_name()) {
+            eprintln!("failed to save the Halv Engine route of agent session `{id}`: {error}");
         }
         storage
             .update_agent_session_savings_paths(
@@ -2836,12 +2956,14 @@ fn remove_stopped_agent_session<T>(
     Ok(())
 }
 
+/// Rebuilds a restored session. `legacy_claude_subscription_proxy` is the
+/// stored subscription opt-in. Only a row from 1.0.0 or older reads it.
 fn rehydrated_agent_session_record(
     row: &AgentSessionRow,
     terminal: &TerminalSession,
-    claude_subscription_proxy: bool,
+    legacy_claude_subscription_proxy: bool,
     savings_paths: &SessionSavingsPaths,
-) -> AgentSessionResult<(AgentSession, SessionLane)> {
+) -> AgentSessionResult<(AgentSession, SessionLane, HeadroomRoute)> {
     if row.id != terminal.id {
         return Err(format!(
             "failed to rehydrate agent session `{}`: terminal id `{}` does not match",
@@ -2876,8 +2998,15 @@ fn rehydrated_agent_session_record(
             title: title.clone(),
         });
     let lane = lane_kind.rehydrated_lane();
-    let proxy_source =
-        rehydrated_session_uses_shared_proxy(agent_kind, lane_kind, claude_subscription_proxy);
+    let route = rehydrated_headroom_route(
+        row.headroom_route.as_deref(),
+        agent_kind,
+        lane_kind,
+        legacy_claude_subscription_proxy,
+    );
+    // A restored session keeps the proxy source of its launch, whatever the
+    // engine preference is now.
+    let proxy_source = route.proxy_source();
     let rtk_instruction = adapter_for(agent_kind).uses_rtk_instruction();
     Ok((
         AgentSession {
@@ -2910,38 +3039,24 @@ fn rehydrated_agent_session_record(
             ),
         },
         lane,
+        route,
     ))
 }
 
-fn rehydrated_session_uses_shared_proxy(
+/// The Halv Engine route of a restored session. A row from 1.0.1 or newer
+/// holds the route of its launch. A row from 1.0.0 or older has none, so the
+/// legacy rule reads it from the lane.
+fn rehydrated_headroom_route(
+    stored: Option<&str>,
     agent_kind: AgentKind,
     lane_kind: SessionLaneKind,
-    claude_subscription_proxy: bool,
-) -> bool {
-    matches!(
-        (agent_kind, lane_kind),
-        (AgentKind::Codex, SessionLaneKind::CodexChatGpt)
-            | (
-                AgentKind::Claude | AgentKind::Zai,
-                SessionLaneKind::ClaudeApiKey | SessionLaneKind::ZaiGlm
-            )
-            | (
-                AgentKind::Kimi,
-                SessionLaneKind::KimiApiKey | SessionLaneKind::KimiSubscription
-            )
-            | (AgentKind::Grok, SessionLaneKind::GrokApiKey)
-            | (
-                AgentKind::Claude | AgentKind::Grok | AgentKind::Kimi | AgentKind::Zai,
-                SessionLaneKind::Custom
-            )
-    ) || (claude_subscription_proxy
-        && matches!(
-            (agent_kind, lane_kind),
-            (
-                AgentKind::Claude | AgentKind::Zai,
-                SessionLaneKind::ClaudeSubscription
-            )
-        ))
+    legacy_claude_subscription_proxy: bool,
+) -> HeadroomRoute {
+    stored
+        .and_then(HeadroomRoute::from_storage_name)
+        .unwrap_or_else(|| {
+            HeadroomRoute::legacy(agent_kind, lane_kind, legacy_claude_subscription_proxy)
+        })
 }
 
 /// Marks the agent rows without a running terminal `exited`. A supervisor
@@ -3152,12 +3267,17 @@ impl AgentSessionManager {
         snapshots
     }
 
+    /// Adopts the agent sessions that survived the last app run. When a
+    /// restored session needs the shared Halv Engine, the engine runs for
+    /// this app run (`SidecarManager::keep_for_restored_sessions`), also
+    /// while the preference is off. `legacy_claude_subscription_proxy` is the
+    /// stored subscription opt-in for rows from 1.0.0 or older.
     pub(crate) fn rehydrate_supervised(
         &self,
         app: &AppHandle,
         storage: &Storage,
         terminals: &TerminalManager,
-        claude_subscription_proxy: bool,
+        legacy_claude_subscription_proxy: bool,
     ) -> AgentSessionResult<()> {
         let running_terminals = terminals
             .list()
@@ -3194,10 +3314,10 @@ impl AgentSessionManager {
                 }
             };
             let savings_paths = resolve_session_savings_paths(storage, &row);
-            let (mut record, lane) = match rehydrated_agent_session_record(
+            let (mut record, lane, route) = match rehydrated_agent_session_record(
                 &row,
                 terminal,
-                claude_subscription_proxy,
+                legacy_claude_subscription_proxy,
                 &savings_paths,
             ) {
                 Ok(value) => value,
@@ -3206,6 +3326,13 @@ impl AgentSessionManager {
                     continue;
                 }
             };
+            // The pane holds the engine port of its launch. Without the
+            // engine, its next request gets "connection refused".
+            if route.needs_shared_engine() {
+                if let Some(sidecar) = &sidecar {
+                    sidecar.keep_for_restored_sessions();
+                }
+            }
             record.last_active_at = Utc::now().to_rfc3339();
             let managed = build_rehydrated_managed_session(
                 record,
@@ -3661,7 +3788,7 @@ impl AgentSessionManager {
                 lane: &lane,
                 permission_mode,
                 resume_cli_session_id: resume_cli_session_id.as_deref(),
-                proxy_port: session_proxy.as_ref().map(|proxy| proxy.port),
+                proxy_port: session_proxy.as_ref().and_then(|proxy| proxy.port),
                 project: &session_id,
                 savings_database_path: storage.database_path(),
                 model: model.as_deref(),
@@ -3686,7 +3813,10 @@ impl AgentSessionManager {
         let lane_kind = lane.kind();
         let rtk_source_path = exec::rtk_session_database_path(&session_id);
         let crux_source_path = exec::crux_session_ledger_path(&session_id);
-        let proxy_source = lane.uses_proxy(agent_kind, false);
+        let proxy_source = session_proxy
+            .as_ref()
+            .is_some_and(SessionProxyContext::routed)
+            && lane.uses_proxy(agent_kind, false);
         let rtk_instruction = adapter.uses_rtk_instruction();
         let session = AgentSession {
             id: session_id.clone(),
@@ -3718,15 +3848,7 @@ impl AgentSessionManager {
             ),
         };
         let (savings_meter, nested_codex_home) = match session_proxy {
-            Some(proxy) => (
-                Some(SessionSavingsMeter {
-                    sidecar: proxy.sidecar,
-                    project: session_id.clone(),
-                    before: Mutex::new(None),
-                    shutdown_on_exit: proxy.shutdown_on_exit,
-                }),
-                proxy.nested_codex_home,
-            ),
+            Some(proxy) => (proxy.savings_meter(&session_id), proxy.nested_codex_home),
             None => (None, None),
         };
         let managed = Arc::new(ManagedAgentSession {
@@ -3832,18 +3954,13 @@ impl AgentSessionManager {
             Instant::now(),
             false,
         );
-        let proxy_source = lane.uses_proxy(agent_kind, claude_subscription_proxy);
+        let proxy_source = session_proxy
+            .as_ref()
+            .is_some_and(SessionProxyContext::routed)
+            && lane.uses_proxy(agent_kind, claude_subscription_proxy);
         let rtk_instruction = adapter.uses_rtk_instruction();
         let (savings_meter, nested_codex_home) = match session_proxy {
-            Some(proxy) => (
-                Some(SessionSavingsMeter {
-                    sidecar: proxy.sidecar,
-                    project: id.clone(),
-                    before: Mutex::new(None),
-                    shutdown_on_exit: proxy.shutdown_on_exit,
-                }),
-                proxy.nested_codex_home,
-            ),
+            Some(proxy) => (proxy.savings_meter(&id), proxy.nested_codex_home),
             None => (None, None),
         };
         let managed = Arc::new(ManagedAgentSession {
@@ -5407,7 +5524,8 @@ impl SessionLauncher<'_> {
             LaneCredentialMode::Rehydrate { required: false } => req.lane,
         };
         let ponytail_mode = self.preferences.ponytail()?;
-        let claude_subscription_proxy = self.preferences.claude_subscription_proxy()?;
+        // The subscription lane uses the engine only when both switches are on.
+        let claude_subscription_proxy = self.preferences.effective_claude_subscription_proxy()?;
         let task_routing = self.preferences.task_routing()?;
         let worker_lane = self.preferences.worker_lane()?;
         let tier_agents = self.preferences.routing_tier_agents()?;
@@ -5423,6 +5541,12 @@ impl SessionLauncher<'_> {
             PermissionModeSource::Inherited(permission_mode) => permission_mode,
         };
         let session_proxy = session_proxy_context(req.agent_kind, &req.lane, self.sidecar).await?;
+        // The engine switch can change between the preference read and the
+        // context. A lane without an engine port goes direct.
+        let claude_subscription_proxy = claude_subscription_proxy
+            && session_proxy
+                .as_ref()
+                .is_some_and(SessionProxyContext::routed);
         let mut guard = SlotAndProxyGuard::new(self.manager.active_sessions.clone(), session_proxy);
         let session_id = new_uuid_v4();
         prepare_nested_codex_home(req.agent_kind, guard.session_proxy_mut(), &session_id)?;
@@ -5452,7 +5576,7 @@ impl SessionLauncher<'_> {
             assigned_cli_session_id.as_deref(),
             Some(&permission_mode),
             req.initial_prompt.as_deref(),
-            guard.session_proxy().as_ref().map(|proxy| proxy.port),
+            guard.session_proxy().as_ref().and_then(|proxy| proxy.port),
             &session_id,
             self.storage.database_path(),
             guard
@@ -5931,7 +6055,9 @@ fn tag_session_conversation(
 fn shutdown_owned_proxy(session_proxy: &Option<SessionProxyContext>) {
     if let Some(proxy) = session_proxy {
         if proxy.shutdown_on_exit {
-            proxy.sidecar.shutdown();
+            if let Some(sidecar) = &proxy.sidecar {
+                sidecar.shutdown();
+            }
         }
         if let Some(codex_home) = &proxy.nested_codex_home {
             codex::remove_nested_home(codex_home);
@@ -6115,6 +6241,10 @@ async fn session_proxy_context(
                 .find(|(name, _)| name == "OPENAI_API_KEY")
                 .is_some_and(|(_, value)| !value.trim().is_empty())
     );
+    // The Claude subscription lane stays in this list also while its opt-in
+    // is off: its nested Codex home routes the JEV Codex workers through
+    // the engine and measures them. Only its own Anthropic traffic follows
+    // the opt-in (`claude::apply_lane_environment`).
     let requires_shared_proxy = custom_codex_api_key
         || matches!(
             (agent_kind, lane),
@@ -6129,14 +6259,20 @@ async fn session_proxy_context(
                     | SessionLane::Custom { .. }
             ) | (AgentKind::Grok, SessionLane::GrokApiKey { .. })
         );
+    if !sidecar.is_enabled() {
+        // The Halv Engine is off: no engine starts, Kimi's isolated engine
+        // included. A lane that used the shared engine still gets a direct
+        // context, so the nested Codex home keeps measuring JEV workers.
+        return Ok(requires_shared_proxy.then(SessionProxyContext::direct));
+    }
     if let Some(upstream) = adapter_for(agent_kind).isolated_proxy_upstream(lane) {
         let isolated = sidecar
             .start_isolated_upstream(SidecarUpstream::OpenAi(upstream.to_string()))
             .await?;
         let port = isolated.port();
         return Ok(Some(SessionProxyContext {
-            sidecar: isolated,
-            port,
+            sidecar: Some(isolated),
+            port: Some(port),
             shutdown_on_exit: true,
             nested_codex_home: None,
         }));
@@ -6146,8 +6282,8 @@ async fn session_proxy_context(
     }
     let port = shared_proxy_port_from_status(agent_kind, sidecar.ensure_ready().await)?;
     Ok(Some(SessionProxyContext {
-        sidecar: sidecar.clone(),
-        port,
+        sidecar: Some(sidecar.clone()),
+        port: Some(port),
         shutdown_on_exit: false,
         nested_codex_home: None,
     }))
@@ -6176,6 +6312,7 @@ fn shared_proxy_port_from_status(
         SidecarStatus::Installing { .. } | SidecarStatus::Starting { .. } => {
             Err("Headroom is not ready for the proxied agent lane".to_string())
         }
+        SidecarStatus::Off { .. } => Err(crate::sidecar::ENGINE_OFF_MESSAGE.to_string()),
     }
 }
 
@@ -6873,6 +7010,7 @@ mod tests {
             exit_code: None,
             rtk_db_path: None,
             crux_ledger_path: None,
+            headroom_route: None,
         };
         let terminal = TerminalSession {
             id: row.id.clone(),
@@ -6901,9 +7039,11 @@ mod tests {
             row.rtk_db_path.as_deref(),
             row.crux_ledger_path.as_deref(),
         );
-        let (record, lane) =
+        let (record, lane, route) =
             rehydrated_agent_session_record(&row, &terminal, false, &savings_paths)
                 .expect("adopted session should rehydrate");
+        // A row from 1.0.0 has no saved route, so the lane tells it.
+        assert_eq!(route, HeadroomRoute::Engine);
 
         assert_eq!(record.id, row.id);
         assert_eq!(record.agent_kind, AgentKind::Grok);
@@ -6949,32 +7089,131 @@ mod tests {
     }
 
     #[test]
-    fn rehydrated_proxy_sources_follow_lane_and_preference() {
-        assert!(!rehydrated_session_uses_shared_proxy(
-            AgentKind::Claude,
-            SessionLaneKind::ClaudeSubscription,
-            false,
-        ));
-        assert!(rehydrated_session_uses_shared_proxy(
-            AgentKind::Claude,
-            SessionLaneKind::ClaudeSubscription,
-            true,
-        ));
-        assert!(rehydrated_session_uses_shared_proxy(
-            AgentKind::Kimi,
-            SessionLaneKind::KimiApiKey,
-            false,
-        ));
-        assert!(rehydrated_session_uses_shared_proxy(
-            AgentKind::Grok,
-            SessionLaneKind::Custom,
-            false,
-        ));
-        assert!(!rehydrated_session_uses_shared_proxy(
-            AgentKind::Codex,
-            SessionLaneKind::Custom,
-            false,
-        ));
+    fn legacy_rows_read_the_route_from_the_lane() {
+        use HeadroomRoute::{Direct, Engine, Isolated, Workers};
+        for (agent_kind, lane_kind, subscription, expected) in [
+            (
+                AgentKind::Claude,
+                SessionLaneKind::ClaudeSubscription,
+                true,
+                Engine,
+            ),
+            // The opt-in was off, but the nested Codex home still routed the
+            // JEV workers through the engine.
+            (
+                AgentKind::Claude,
+                SessionLaneKind::ClaudeSubscription,
+                false,
+                Workers,
+            ),
+            (
+                AgentKind::Claude,
+                SessionLaneKind::ClaudeApiKey,
+                false,
+                Engine,
+            ),
+            (AgentKind::Zai, SessionLaneKind::ZaiGlm, false, Engine),
+            (AgentKind::Claude, SessionLaneKind::Custom, false, Engine),
+            (AgentKind::Grok, SessionLaneKind::GrokApiKey, false, Engine),
+            (
+                AgentKind::Codex,
+                SessionLaneKind::CodexChatGpt,
+                false,
+                Engine,
+            ),
+            (
+                AgentKind::Kimi,
+                SessionLaneKind::KimiApiKey,
+                false,
+                Isolated,
+            ),
+            (
+                AgentKind::Kimi,
+                SessionLaneKind::KimiSubscription,
+                false,
+                Isolated,
+            ),
+            // These lanes had no engine context in 1.0.0.
+            (AgentKind::Grok, SessionLaneKind::Custom, false, Direct),
+            (AgentKind::Codex, SessionLaneKind::Custom, false, Direct),
+        ] {
+            assert_eq!(
+                rehydrated_headroom_route(None, agent_kind, lane_kind, subscription),
+                expected,
+                "{agent_kind:?} {lane_kind:?} {subscription}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_route_wins_over_the_lane_rule() {
+        let route = |stored| {
+            rehydrated_headroom_route(
+                stored,
+                AgentKind::Claude,
+                SessionLaneKind::ClaudeApiKey,
+                true,
+            )
+        };
+        // A session launched with the engine off went direct.
+        assert_eq!(route(Some("direct")), HeadroomRoute::Direct);
+        assert_eq!(route(Some("workers")), HeadroomRoute::Workers);
+        assert_eq!(route(Some("engine")), HeadroomRoute::Engine);
+        // A damaged value falls back to the lane rule.
+        assert_eq!(route(Some("bogus")), HeadroomRoute::Engine);
+        for route in [
+            HeadroomRoute::Direct,
+            HeadroomRoute::Engine,
+            HeadroomRoute::Workers,
+            HeadroomRoute::Isolated,
+        ] {
+            assert_eq!(
+                HeadroomRoute::from_storage_name(route.storage_name()),
+                Some(route)
+            );
+        }
+    }
+
+    #[test]
+    fn only_shared_engine_routes_need_the_engine_after_a_restart() {
+        assert!(HeadroomRoute::Engine.needs_shared_engine());
+        assert!(HeadroomRoute::Workers.needs_shared_engine());
+        // Kimi's isolated engine stops with the app and its port is not
+        // saved, so the shared engine cannot serve it.
+        assert!(!HeadroomRoute::Isolated.needs_shared_engine());
+        assert!(!HeadroomRoute::Direct.needs_shared_engine());
+
+        assert!(HeadroomRoute::Engine.proxy_source());
+        assert!(HeadroomRoute::Isolated.proxy_source());
+        assert!(!HeadroomRoute::Workers.proxy_source());
+        assert!(!HeadroomRoute::Direct.proxy_source());
+    }
+
+    #[test]
+    fn a_launch_saves_the_route_of_its_context() {
+        let meter = |shutdown_on_exit| SessionSavingsMeter {
+            sidecar: SidecarManager::new(4330),
+            project: "session-3".to_string(),
+            before: Mutex::new(None),
+            shutdown_on_exit,
+        };
+        assert_eq!(HeadroomRoute::of_launch(None, false), HeadroomRoute::Direct);
+        assert_eq!(
+            HeadroomRoute::of_launch(Some(&meter(false)), true),
+            HeadroomRoute::Engine
+        );
+        assert_eq!(
+            HeadroomRoute::of_launch(Some(&meter(false)), false),
+            HeadroomRoute::Workers
+        );
+        assert_eq!(
+            HeadroomRoute::of_launch(Some(&meter(true)), true),
+            HeadroomRoute::Isolated
+        );
+        // An engine-off context has no meter: the session went direct.
+        assert!(SessionProxyContext::direct()
+            .savings_meter("session-3")
+            .is_none());
     }
 
     #[test]
@@ -9111,6 +9350,104 @@ mod tests {
         assert_eq!(paths.rtk, legacy_rtk);
         assert_eq!(paths.crux, legacy_crux);
         let _ = std::fs::remove_dir_all(legacy_directory);
+    }
+
+    #[test]
+    fn engine_off_sessions_start_no_engine_and_keep_the_nested_codex_home_slot() {
+        let sidecar = SidecarManager::new(4320);
+        sidecar.set_enabled(false);
+        let api_key = || SessionCredential::ApiKey {
+            api_key: "test-key".to_string(),
+        };
+        let shared_lanes = [
+            (AgentKind::Claude, SessionLane::ClaudeSubscription),
+            (
+                AgentKind::Claude,
+                SessionLane::ClaudeApiKey {
+                    credential: api_key(),
+                    base_url: None,
+                },
+            ),
+            (
+                AgentKind::Zai,
+                SessionLane::ZaiGlm {
+                    credential: api_key(),
+                    model_overrides: None,
+                },
+            ),
+            (
+                AgentKind::Grok,
+                SessionLane::GrokApiKey {
+                    credential: api_key(),
+                    model_overrides: None,
+                },
+            ),
+            (
+                AgentKind::Codex,
+                SessionLane::CodexChatGpt { proxied: true },
+            ),
+            (
+                AgentKind::Codex,
+                SessionLane::Custom {
+                    env: vec![("OPENAI_API_KEY".to_string(), "test-key".to_string())],
+                },
+            ),
+            (AgentKind::Claude, SessionLane::Custom { env: Vec::new() }),
+        ];
+        for (agent_kind, lane) in shared_lanes {
+            let context =
+                tauri::async_runtime::block_on(session_proxy_context(agent_kind, &lane, &sidecar))
+                    .expect("an engine-off context should build")
+                    .expect("a formerly proxied lane keeps a direct context");
+            assert!(context.sidecar.is_none());
+            assert!(context.port.is_none());
+            assert!(!context.routed());
+            assert!(!context.shutdown_on_exit);
+            assert!(context.savings_meter("session-1").is_none());
+        }
+        // Kimi's isolated engine never starts.
+        for lane in [
+            SessionLane::KimiSubscription,
+            SessionLane::KimiApiKey {
+                credential: api_key(),
+            },
+        ] {
+            assert!(tauri::async_runtime::block_on(session_proxy_context(
+                AgentKind::Kimi,
+                &lane,
+                &sidecar,
+            ))
+            .expect("an engine-off Kimi context should build")
+            .is_none());
+        }
+        assert!(matches!(
+            tauri::async_runtime::block_on(sidecar.refresh_status()),
+            SidecarStatus::Off { port: 4320 }
+        ));
+        assert!(shared_proxy_port_from_status(
+            AgentKind::Claude,
+            SidecarStatus::Off { port: 4320 }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn routed_contexts_build_a_savings_meter() {
+        let sidecar = SidecarManager::new(4321);
+        let routed = SessionProxyContext {
+            sidecar: Some(sidecar),
+            port: Some(4321),
+            shutdown_on_exit: false,
+            nested_codex_home: None,
+        };
+        assert!(routed.routed());
+        let meter = routed
+            .savings_meter("session-2")
+            .expect("a routed context builds a meter");
+        assert_eq!(meter.project, "session-2");
+        assert!(SessionProxyContext::direct()
+            .savings_meter("session-2")
+            .is_none());
     }
 
     #[test]

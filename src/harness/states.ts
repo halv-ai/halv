@@ -99,7 +99,8 @@ export type HarnessFixtureConfig = {
   account: "signed-in" | "paywall" | "signed-out";
   credentials: "chatgpt" | "codex" | "api-key" | "none";
   history: "full" | "empty" | "marketing" | "marketing-pro";
-  sidecar: "running" | "missing" | "error";
+  // "off" is a new install: the user did not turn Halv Engine on.
+  sidecar: "running" | "missing" | "error" | "off";
   // "none" is a new install: no saving yet, so no trial card (ADR 0018).
   savings: "standard" | "aggressive" | "none";
   apiRequests: "standard" | "none";
@@ -222,10 +223,12 @@ const MARKETING_WORKSPACE_FIXTURE = {
   marketingWorkspace: true,
 } as const satisfies HarnessFixtureConfig;
 
+// A new install starts with Halv Engine off.
 const CONNECT_FIXTURE = {
   ...RUNNING_FIXTURE,
   credentials: "none",
   history: "empty",
+  sidecar: "off",
   savings: "none",
 } as const satisfies HarnessFixtureConfig;
 
@@ -266,6 +269,7 @@ export const HARNESS_STATES = {
       ...RUNNING_FIXTURE,
       credentials: "api-key",
       history: "empty",
+      sidecar: "off",
       savings: "none",
     },
     onboarding: "available",
@@ -278,6 +282,7 @@ export const HARNESS_STATES = {
       account: "signed-out",
       credentials: "codex",
       history: "empty",
+      sidecar: "off",
       savings: "none",
     },
     onboarding: "available",

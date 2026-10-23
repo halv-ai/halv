@@ -2,6 +2,7 @@ import {
   SettingsConnections,
   type SettingsConnectionsRequest,
 } from "./SettingsConnections";
+import { NotificationPermissionNotice } from "./NotificationPermissionNotice";
 import { SettingsCategoryIcon } from "./SettingsCategoryIcon";
 import { SettingsMobile } from "./SettingsMobile";
 import { featureFlagStore } from "../featureFlags";
@@ -117,6 +118,10 @@ type SettingsPanelProps = {
   onClose: () => void;
   onLanguageChange: (language: LanguagePreference) => void;
   onThemeChange: (theme: ThemePreference) => void;
+  /** Tells the app that the user saved the Show Dot setting. */
+  onShowDotShortcutChange?: (show: boolean) => void;
+  /** Tells the app that the user saved the Halv Engine switch. */
+  onHeadroomEnabledChange?: (enabled: boolean) => void;
   onOpenBrowserSettings: () => void;
   onOpenKeyboardShortcuts: () => void;
   onAccountSignOut: () => Promise<void>;
@@ -149,6 +154,8 @@ export function SettingsPanel({
   onClose,
   onLanguageChange,
   onThemeChange,
+  onShowDotShortcutChange,
+  onHeadroomEnabledChange,
   onOpenBrowserSettings,
   onOpenKeyboardShortcuts,
   onAccountSignOut,
@@ -336,13 +343,31 @@ export function SettingsPanel({
   const [routingTierAgentsNotice, setRoutingTierAgentsNotice] = useState<
     string | null
   >(null);
-  const [claudeSubscriptionProxy, setClaudeSubscriptionProxy] = useState(true);
+  const [claudeSubscriptionProxy, setClaudeSubscriptionProxy] = useState(false);
+  const [headroomEnabled, setHeadroomEnabled] = useState(false);
+  const [headroomEnabledSavePending, setHeadroomEnabledSavePending] =
+    useState(false);
+  const [headroomEnabledError, setHeadroomEnabledError] = useState<
+    string | null
+  >(null);
+  const [headroomEnabledNotice, setHeadroomEnabledNotice] = useState<
+    string | null
+  >(null);
+  // The engine is off for new sessions but runs for restored sessions.
+  const [engineRunsForRestoredSessions, setEngineRunsForRestoredSessions] =
+    useState(false);
   const [claudeSubscriptionProxySavePending, setClaudeSubscriptionProxySavePending] =
     useState(false);
   const [claudeSubscriptionProxyError, setClaudeSubscriptionProxyError] =
     useState<string | null>(null);
   const [claudeSubscriptionProxyNotice, setClaudeSubscriptionProxyNotice] =
     useState<string | null>(null);
+  const [showDotShortcut, setShowDotShortcut] = useState(false);
+  const [showDotShortcutSavePending, setShowDotShortcutSavePending] =
+    useState(false);
+  const [showDotShortcutError, setShowDotShortcutError] = useState<
+    string | null
+  >(null);
   const [memoriesEnabled, setMemoriesEnabled] = useState(true);
   const [memoriesSavePending, setMemoriesSavePending] = useState(false);
   const [memoriesError, setMemoriesError] = useState<string | null>(null);
@@ -467,7 +492,9 @@ export function SettingsPanel({
             ? (preferences.routingTierAgents ?? defaultRoutingTierAgents())
             : routingTierAgentsForLane(legacyLane),
         );
-        setClaudeSubscriptionProxy(preferences.claudeSubscriptionProxy ?? true);
+        setClaudeSubscriptionProxy(preferences.claudeSubscriptionProxy ?? false);
+        setHeadroomEnabled(preferences.headroomEnabled ?? false);
+        setShowDotShortcut(preferences.showDotShortcut ?? false);
         setMemoriesEnabled(preferences.memoriesEnabled ?? true);
         setSavedNotificationPreferences({
           completionNotifications: preferences.completionNotifications,
@@ -493,6 +520,29 @@ export function SettingsPanel({
       disposed = true;
     };
   }, [open, preferencesLoadAttempt, t]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let disposed = false;
+    // The value changes only with the switch: it is true while the switch is
+    // off and restored sessions from the last app run use the engine.
+    void ipc.sidecar.runsForRestoredSessions()
+      .then((runs) => {
+        if (!disposed) {
+          setEngineRunsForRestoredSessions(runs);
+        }
+      })
+      .catch(() => {
+        if (!disposed) {
+          setEngineRunsForRestoredSessions(false);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [headroomEnabled, open]);
 
   useEffect(() => {
     if (!open) {
@@ -977,6 +1027,56 @@ export function SettingsPanel({
       );
     } finally {
       setClaudeSubscriptionProxySavePending(false);
+    }
+  }
+
+  async function saveHeadroomEnabled(nextEnabled: boolean) {
+    setHeadroomEnabledSavePending(true);
+    setHeadroomEnabledError(null);
+    setHeadroomEnabledNotice(null);
+    try {
+      const preferences = await ipc.preferences.setHeadroomEnabled({
+        headroomEnabled: nextEnabled,
+      });
+      setHeadroomEnabled(preferences.headroomEnabled);
+      setClaudeSubscriptionProxy(preferences.claudeSubscriptionProxy);
+      setHeadroomEnabledNotice(
+        preferences.headroomEnabled
+          ? t("Halv Engine is on for new sessions.")
+          : t(
+              "Halv Engine is off for new sessions. A running engine stops when you quit Halv.",
+            ),
+      );
+      onHeadroomEnabledChange?.(preferences.headroomEnabled);
+    } catch (error) {
+      setHeadroomEnabledError(
+        t("Could not save the Halv Engine preference: {error}", {
+          error: errorMessage(error),
+        }),
+      );
+    } finally {
+      setHeadroomEnabledSavePending(false);
+    }
+  }
+
+  async function saveShowDotShortcut(nextEnabled: boolean) {
+    setShowDotShortcutSavePending(true);
+    setShowDotShortcutError(null);
+    try {
+      const preferences = await ipc.preferences.setShowDotShortcut({
+        showDotShortcut: nextEnabled,
+      });
+      const saved = preferences.showDotShortcut ?? false;
+      setShowDotShortcut(saved);
+      onShowDotShortcutChange?.(saved);
+    } catch (error) {
+      setShowDotShortcutError(
+        t("Could not save the Dot preference: {error}", {
+          error: errorMessage(error),
+        }),
+      );
+    } finally {
+      setShowDotShortcutSavePending(false);
     }
   }
 
@@ -2101,6 +2201,7 @@ export function SettingsPanel({
                 {notificationNotice}
               </p>
             ) : null}
+            <NotificationPermissionNotice />
           </section>
 
           <section className="space-y-3" hidden={activeCategory !== "connections"}>
@@ -2484,6 +2585,44 @@ export function SettingsPanel({
             hidden={activeCategory !== "preferences"}
           >
             <div>
+              <h4 className="text-sm font-medium text-content-primary">Dot</h4>
+            </div>
+            <label className="flex items-center gap-2 rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary">
+              <input
+                aria-describedby="show-dot-shortcut-description"
+                checked={showDotShortcut}
+                className="accent-accent"
+                disabled={
+                  preferencesLoadState !== "loaded" ||
+                  showDotShortcutSavePending
+                }
+                onChange={(event) =>
+                  void saveShowDotShortcut(event.target.checked)
+                }
+                type="checkbox"
+              />
+              {t("Show Dot in the sidebar")}
+            </label>
+            <p
+              className="text-xs leading-5 text-content-muted"
+              id="show-dot-shortcut-description"
+            >
+              {t(
+                "Dot opens your ChatGPT Dot inside Halv. You sign in to ChatGPT in the Dot panel. Off by default.",
+              )}
+            </p>
+            {showDotShortcutError ? (
+              <p className="text-xs text-danger" role="alert">
+                {showDotShortcutError}
+              </p>
+            ) : null}
+          </section>
+
+          <section
+            className="space-y-3 border-t border-surface-border/25 pt-5"
+            hidden={activeCategory !== "preferences"}
+          >
+            <div>
               <h4 className="text-sm font-medium text-content-primary">
                 {t("Personality")}
               </h4>
@@ -2744,51 +2883,6 @@ export function SettingsPanel({
             {routingTierAgentsNotice ? (
               <p className="text-xs text-accent" role="status">
                 {routingTierAgentsNotice}
-              </p>
-            ) : null}
-          </section>
-
-          <section
-            className="space-y-3 border-t border-surface-border/25 pt-5"
-            hidden={activeCategory !== "preferences"}
-          >
-            <div>
-              <h4 className="text-sm font-medium text-content-primary">
-                {t("Claude subscription")}
-              </h4>
-            </div>
-            <label className="flex items-center gap-2 rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary">
-              <input
-                aria-describedby="claude-subscription-proxy-warning"
-                checked={claudeSubscriptionProxy}
-                className="accent-accent"
-                disabled={
-                  preferencesLoadState !== "loaded" ||
-                  claudeSubscriptionProxySavePending
-                }
-                onChange={(event) =>
-                  void saveClaudeSubscriptionProxy(event.target.checked)
-                }
-                type="checkbox"
-              />
-              {t("Route Claude subscription through Halv Engine")}
-            </label>
-            <p
-              className="text-xs leading-5 text-content-muted"
-              id="claude-subscription-proxy-warning"
-            >
-              {t(
-                "Halv Engine will compress your Claude Code traffic before it reaches Anthropic. Anthropic's consumer terms may not allow modifying subscription traffic; enable at your own risk. Only affects new terminal sessions.",
-              )}
-            </p>
-            {claudeSubscriptionProxyError ? (
-              <p className="text-xs text-danger" role="alert">
-                {claudeSubscriptionProxyError}
-              </p>
-            ) : null}
-            {claudeSubscriptionProxyNotice ? (
-              <p className="text-xs text-accent" role="status">
-                {claudeSubscriptionProxyNotice}
               </p>
             ) : null}
           </section>
@@ -3343,35 +3437,127 @@ export function SettingsPanel({
                   {t("Proxy")}
                 </h4>
                 <p className="mt-1 text-sm text-content-secondary">
-                  {formatEngineStatus(sidecar)}
+                  {sidecar?.state === "off"
+                    ? t("Off")
+                    : formatEngineStatus(sidecar)}
                 </p>
+                {!headroomEnabled && engineRunsForRestoredSessions ? (
+                  <p
+                    className="mt-1 text-xs leading-5 text-content-muted"
+                    role="status"
+                  >
+                    {t(
+                      "Runs for restored sessions until you quit Halv. New sessions do not use it.",
+                    )}
+                  </p>
+                ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {headroomUpdateAvailable ? (
+              {/* An error can come from a Chat mode start while the switch is
+                  off, so Restart shows for it too. */}
+              {headroomEnabled || sidecar?.state === "error" ? (
+                <div className="flex flex-wrap gap-2">
+                  {headroomEnabled && headroomUpdateAvailable ? (
+                    <button
+                      className="rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={headroomUpdatePending || restartPending}
+                      onClick={() => void updateHeadroom()}
+                      type="button"
+                    >
+                      {headroomUpdatePending
+                        ? t("Updating...")
+                        : t("Update proxy")}
+                    </button>
+                  ) : null}
                   <button
                     className="rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={headroomUpdatePending || restartPending}
-                    onClick={() => void updateHeadroom()}
+                    disabled={
+                      restartPending || sidecarInstalling || headroomUpdatePending
+                    }
+                    onClick={() => void restartSidecar()}
                     type="button"
                   >
-                    {headroomUpdatePending
-                      ? t("Updating...")
-                      : t("Update proxy")}
+                    {restartPending ? t("Restarting...") : t("Restart")}
                   </button>
-                ) : null}
-                <button
-                  className="rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary transition-colors duration-150 hover:bg-surface-raised hover:text-content-primary focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={
-                    restartPending || sidecarInstalling || headroomUpdatePending
-                  }
-                  onClick={() => void restartSidecar()}
-                  type="button"
-                >
-                  {restartPending ? t("Restarting...") : t("Restart")}
-                </button>
-              </div>
+                </div>
+              ) : null}
             </div>
-            {showInstallPanel ? (
+            <label className="flex items-start gap-2 rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary">
+              <input
+                aria-describedby="headroom-enabled-description"
+                checked={headroomEnabled}
+                className="mt-0.5 accent-accent"
+                disabled={
+                  preferencesLoadState !== "loaded" ||
+                  headroomEnabledSavePending
+                }
+                onChange={(event) =>
+                  void saveHeadroomEnabled(event.target.checked)
+                }
+                type="checkbox"
+              />
+              <span>
+                <span className="font-medium text-content-primary">
+                  {t("Halv Engine")}
+                </span>
+                <span
+                  className="mt-1 block text-xs leading-5 text-content-muted"
+                  id="headroom-enabled-description"
+                >
+                  {t(
+                    "Compresses context before it reaches your AI provider, so you use fewer tokens. Off by default. A change applies to new sessions only. While it is off, Chat mode still starts Halv Engine to send chat messages.",
+                  )}
+                </span>
+              </span>
+            </label>
+            {headroomEnabledError ? (
+              <p className="text-xs text-danger" role="alert">
+                {headroomEnabledError}
+              </p>
+            ) : null}
+            {headroomEnabledNotice ? (
+              <p className="text-xs text-accent" role="status">
+                {headroomEnabledNotice}
+              </p>
+            ) : null}
+            {headroomEnabled ? (
+              <div className="space-y-2 border-l border-surface-border/30 pl-4">
+                <label className="flex items-center gap-2 rounded-md border border-surface-border/30 px-3 py-2 text-sm text-content-secondary">
+                  <input
+                    aria-describedby="claude-subscription-proxy-warning"
+                    checked={claudeSubscriptionProxy}
+                    className="accent-accent"
+                    disabled={
+                      preferencesLoadState !== "loaded" ||
+                      claudeSubscriptionProxySavePending
+                    }
+                    onChange={(event) =>
+                      void saveClaudeSubscriptionProxy(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  {t("Route Claude subscription through Halv Engine")}
+                </label>
+                <p
+                  className="text-xs leading-5 text-content-muted"
+                  id="claude-subscription-proxy-warning"
+                >
+                  {t(
+                    "Halv Engine will compress your Claude Code traffic before it reaches Anthropic. Anthropic's consumer terms may not allow modifying subscription traffic; enable at your own risk. Only affects new terminal sessions.",
+                  )}
+                </p>
+                {claudeSubscriptionProxyError ? (
+                  <p className="text-xs text-danger" role="alert">
+                    {claudeSubscriptionProxyError}
+                  </p>
+                ) : null}
+                {claudeSubscriptionProxyNotice ? (
+                  <p className="text-xs text-accent" role="status">
+                    {claudeSubscriptionProxyNotice}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {headroomEnabled && showInstallPanel ? (
               <div
                 className={`space-y-3 rounded-md border p-3 text-sm ${
                   installError

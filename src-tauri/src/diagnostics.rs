@@ -272,6 +272,11 @@ fn sidecar_health(status: SidecarStatus) -> DiagnosticComponent {
             status: DiagnosticStatus::Attention,
             summary: "Bundled proxy reported a local error.".to_string(),
         },
+        // The user turned the engine off. That is a healthy choice.
+        SidecarStatus::Off { .. } => DiagnosticComponent {
+            status: DiagnosticStatus::Healthy,
+            summary: "Halv Engine is off.".to_string(),
+        },
     }
 }
 
@@ -322,6 +327,22 @@ mod tests {
             .privacy
             .excluded
             .contains(&"Prompts and message contents"));
+    }
+
+    #[test]
+    fn engine_off_is_healthy() {
+        let report = build_snapshot(
+            Some(healthy_storage()),
+            true,
+            SidecarStatus::Off { port: 8787 },
+            "2026-08-09T12:00:00Z".to_string(),
+            Vec::new(),
+        );
+
+        assert_eq!(report.overall_status, DiagnosticStatus::Healthy);
+        let component = sidecar_health(SidecarStatus::Off { port: 8787 });
+        assert_eq!(component.status, DiagnosticStatus::Healthy);
+        assert_eq!(component.summary, "Halv Engine is off.");
     }
 
     #[test]

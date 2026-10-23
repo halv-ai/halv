@@ -77,6 +77,7 @@ const MIGRATION_TASK_HIERARCHIES: &str = "0052_task_hierarchies";
 const MIGRATION_REMOTE_DEVICES: &str = "0053_remote_devices";
 const MIGRATION_LOCAL_ENVIRONMENT_APPROVALS: &str = "0055_local_environment_approvals";
 const MIGRATION_TASK_ROUTE_RECEIPTS: &str = "0056_task_route_receipts";
+const MIGRATION_AGENT_SESSION_HEADROOM_ROUTE: &str = "0060_agent_session_headroom_route";
 const DEFAULT_STORAGE_MODEL: &str = "gpt-5.5";
 const MAX_CONVERSATION_DRAFT_CHARS: usize = 100_000;
 const MAX_AGENT_MEMORIES_PER_SCOPE: usize = 50;
@@ -769,6 +770,10 @@ pub(crate) struct AgentSessionRow {
     pub exit_code: Option<i32>,
     pub rtk_db_path: Option<String>,
     pub crux_ledger_path: Option<String>,
+    /// How the session uses the Halv Engine: `direct`, `engine`, `workers`
+    /// or `isolated` (see `agent_sessions::HeadroomRoute`). `None` for a row
+    /// from 1.0.0 or older.
+    pub headroom_route: Option<String>,
 }
 
 fn agent_session_from_row(row: &Row<'_>) -> rusqlite::Result<AgentSessionRow> {
@@ -797,6 +802,7 @@ fn agent_session_from_row(row: &Row<'_>) -> rusqlite::Result<AgentSessionRow> {
         exit_code: row.get(18)?,
         rtk_db_path: row.get(19)?,
         crux_ledger_path: row.get(20)?,
+        headroom_route: row.get(21)?,
     })
 }
 
@@ -1692,7 +1698,7 @@ impl Storage {
                         conversation_id, cwd, cli_session_id, custom_title, default_title,
                         generated_title, ai_vault_title, ai_vault_session_id, generation,
                         status, created_at, last_active_at, exit_code, rtk_db_path,
-                        crux_ledger_path
+                        crux_ledger_path, headroom_route
                  FROM agent_sessions
                  WHERE id = ?1",
                 params![id],
@@ -1712,7 +1718,7 @@ impl Storage {
                     conversation_id, cwd, cli_session_id, custom_title, default_title,
                     generated_title, ai_vault_title, ai_vault_session_id, generation,
                     status, created_at, last_active_at, exit_code, rtk_db_path,
-                    crux_ledger_path
+                    crux_ledger_path, headroom_route
              FROM agent_sessions
              WHERE status = ?1
              ORDER BY created_at DESC",
@@ -1756,6 +1762,23 @@ impl Storage {
                      crux_ledger_path = COALESCE(?3, crux_ledger_path)
                  WHERE id = ?1",
                 params![id, rtk_db_path, crux_ledger_path],
+            )?;
+        Ok(())
+    }
+
+    /// Saves how an agent session uses the Halv Engine. The next launch
+    /// reads it for the restored sessions.
+    pub(crate) fn set_agent_session_headroom_route(
+        &self,
+        id: &str,
+        headroom_route: &str,
+    ) -> StorageResult<()> {
+        self.connection
+            .lock()
+            .expect("storage lock poisoned")
+            .execute(
+                "UPDATE agent_sessions SET headroom_route = ?2 WHERE id = ?1",
+                params![id, headroom_route],
             )?;
         Ok(())
     }
@@ -5985,6 +6008,7 @@ pub(crate) fn run_migrations(connection: &Connection) -> StorageResult<()> {
         apply_remote_devices_migration(connection)?;
         apply_local_environment_approvals_migration(connection)?;
         apply_task_route_receipts_migration(connection)?;
+        apply_agent_session_headroom_route_migration(connection)?;
         savings_dollars::apply_savings_dollars_migration(connection)?;
         routing_savings::apply_routing_savings_migration(connection)?;
         session_token::apply_auth_session_token_account_migration(connection)?;
@@ -6711,6 +6735,25 @@ fn apply_remote_devices_migration(connection: &Connection) -> StorageResult<()> 
     connection.execute(
         "INSERT OR IGNORE INTO migrations (version, applied_at) VALUES (?1, ?2)",
         params![MIGRATION_REMOTE_DEVICES, now_string()],
+    )?;
+    Ok(())
+}
+
+/// Adds `agent_sessions.headroom_route`. Rows from 1.0.0 or older keep
+/// NULL: the Halv Engine was always on then, so the lane tells the route.
+fn apply_agent_session_headroom_route_migration(connection: &Connection) -> StorageResult<()> {
+    if !column_exists(connection, "agent_sessions", "headroom_route")? {
+        connection.execute(
+            "ALTER TABLE agent_sessions ADD COLUMN headroom_route TEXT NULL CHECK (
+               headroom_route IN ('direct', 'engine', 'workers', 'isolated')
+               OR headroom_route IS NULL
+             )",
+            [],
+        )?;
+    }
+    connection.execute(
+        "INSERT OR IGNORE INTO migrations (version, applied_at) VALUES (?1, ?2)",
+        params![MIGRATION_AGENT_SESSION_HEADROOM_ROUTE, now_string()],
     )?;
     Ok(())
 }
@@ -9961,6 +10004,63 @@ mod tests {
     }
 
     #[test]
+    fn agent_session_headroom_route_survives_later_saves() {
+        let path = test_db_path("agent-session-headroom-route");
+        let storage = Storage::open(&path).expect("storage should open");
+        let session_id = new_uuid_v4();
+        let record = |status| AgentSessionRecord {
+            id: &session_id,
+            agent_kind: "claude",
+            lane: "claude_api_key",
+            mode: "terminal_embedded",
+            ponytail_mode: None,
+            project_id: None,
+            conversation_id: None,
+            cwd: "/tmp/project",
+            cli_session_id: None,
+            custom_title: None,
+            default_title: "Claude 1",
+            generated_title: None,
+            ai_vault_title: None,
+            ai_vault_session_id: None,
+            generation: 0,
+            status,
+            created_at: "2026-10-22T12:00:00Z",
+            last_active_at: "2026-10-22T12:00:00Z",
+            exit_code: None,
+        };
+        let route = |storage: &Storage| {
+            storage
+                .get_agent_session(&session_id)
+                .expect("agent session should load")
+                .expect("agent session should exist")
+                .headroom_route
+        };
+        storage
+            .upsert_agent_session(&record("running"))
+            .expect("agent session should insert");
+        // A row without a saved route reads like a row from 1.0.0.
+        assert_eq!(route(&storage), None);
+
+        for saved in ["engine", "direct"] {
+            storage
+                .set_agent_session_headroom_route(&session_id, saved)
+                .expect("the route should save");
+            storage
+                .upsert_agent_session(&record("waiting_input"))
+                .expect("agent session should update");
+            assert_eq!(route(&storage).as_deref(), Some(saved));
+        }
+        assert!(
+            storage
+                .set_agent_session_headroom_route(&session_id, "unknown")
+                .is_err(),
+            "the column accepts only the known routes"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn agent_session_row_round_trip_and_stale_marking_preserve_history() {
         let path = test_db_path("agent-session-row");
         let storage = Storage::open(&path).expect("storage should open");
@@ -10020,6 +10120,7 @@ mod tests {
             exit_code: Some(9),
             rtk_db_path: Some(rtk_db_path.to_string_lossy().into_owned()),
             crux_ledger_path: Some(crux_ledger_path.to_string_lossy().into_owned()),
+            headroom_route: None,
         };
         assert_eq!(
             storage
@@ -11648,7 +11749,7 @@ mod tests {
         let migration_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
             .expect("migration count should query");
-        assert_eq!(migration_count, 59);
+        assert_eq!(migration_count, 60);
         assert!(
             table_exists(&connection, "task_hierarchies").expect("hierarchy table should exist")
         );

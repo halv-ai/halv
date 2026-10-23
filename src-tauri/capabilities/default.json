@@ -125,11 +125,13 @@
     "allow-preferences-set-personality",
     "allow-preferences-set-ponytail",
     "allow-preferences-set-claude-subscription-proxy",
+    "allow-preferences-set-headroom-enabled",
     "allow-preferences-set-memories-enabled",
     "allow-preferences-set-task-routing",
     "allow-preferences-set-worker-lane",
     "allow-preferences-set-workflow-routing",
     "allow-preferences-set-claude-ultracode",
+    "allow-preferences-set-show-dot-shortcut",
     "allow-preferences-set-routing-tier-agents",
     "allow-preferences-set-analytics-enabled",
     "allow-preferences-set-analytics-consent",
@@ -174,6 +176,7 @@
     "allow-browser-settings-set",
     "allow-browser-clear-data",
     "allow-sidecar-status",
+    "allow-sidecar-runs-for-restored-sessions",
     "allow-sidecar-stats",
     "allow-sidecar-restart",
     "allow-sidecar-install-headroom",
@@ -293,6 +296,9 @@
     "allow-agent-status-snapshot",
     "allow-agent-status-mark-viewed",
     "allow-agent-status-set-focus",
-    "allow-terminal-notify"
+    "allow-terminal-notify",
+    "allow-notification-permission-state",
+    "allow-notification-request-permission",
+    "allow-notification-open-system-settings"
   ]
 }

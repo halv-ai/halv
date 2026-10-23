@@ -1,4 +1,5 @@
 import type { TrayAction, TraySnapshot } from "./tray/model";
+import type { NotificationPermissionState } from "./types";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen } from "@tauri-apps/api/event";
 import type {
@@ -389,6 +390,7 @@ export type MemoriesEnabledArgs = { memoriesEnabled: boolean };
 export type TaskRoutingArgs = { taskRouting: boolean };
 export type WorkflowRoutingArgs = { workflowRouting: boolean };
 export type ClaudeUltracodeArgs = { claudeUltracode: boolean };
+export type ShowDotShortcutArgs = { showDotShortcut: boolean };
 export type WorkerLaneArgs = { workerLane: AppPreferences["workerLane"] };
 export type RoutingTierAgentsArgs = {
   routingTierAgents: AppPreferences["routingTierAgents"];
@@ -409,6 +411,7 @@ export type PonytailArgs = { mode: PonytailMode };
 export type ClaudeSubscriptionProxyArgs = {
   claudeSubscriptionProxy: boolean;
 };
+export type HeadroomEnabledArgs = { headroomEnabled: boolean };
 export type SubagentConcurrencyArgs = { limit: number | null };
 
 // The desktop remote gateway (ADR 0009). Events: "remote-changed" (RemoteStatus)
@@ -643,6 +646,10 @@ export type AgentStatusFocusArgs = { sessionId: string | null };
 export type TerminalNotifyArgs = TerminalAttachArgs & {
   title: string;
   body: string;
+  /** The notification kind. Rust writes it to the banner log. */
+  kind?: string;
+  /** Names the pane signal behind the banner, for the banner log. */
+  trace?: string;
 };
 
 export interface IpcContract {
@@ -791,6 +798,7 @@ export interface IpcContract {
   preferences_set_analytics_enabled: { args: AnalyticsEnabledArgs; result: AppPreferences };
   preferences_set_analytics_consent: { args: AnalyticsConsentArgs; result: AppPreferences };
   preferences_set_claude_subscription_proxy: { args: ClaudeSubscriptionProxyArgs; result: AppPreferences };
+  preferences_set_headroom_enabled: { args: HeadroomEnabledArgs; result: AppPreferences };
   preferences_set_conversation_defaults: { args: ConversationDefaultsArgs; result: AppPreferences };
   preferences_set_keyboard_shortcuts: { args: KeyboardShortcutsArgs; result: AppPreferences };
   preferences_set_memories_enabled: { args: MemoriesEnabledArgs; result: AppPreferences };
@@ -802,6 +810,7 @@ export interface IpcContract {
   preferences_set_worker_lane: { args: WorkerLaneArgs; result: AppPreferences };
   preferences_set_workflow_routing: { args: WorkflowRoutingArgs; result: AppPreferences };
   preferences_set_claude_ultracode: { args: ClaudeUltracodeArgs; result: AppPreferences };
+  preferences_set_show_dot_shortcut: { args: ShowDotShortcutArgs; result: AppPreferences };
   preferences_set_routing_tier_agents: { args: RoutingTierAgentsArgs; result: AppPreferences };
   project_add_local: { args: ProjectPathArgs; result: Project };
   project_adoption_root: { args: ProjectPathArgs; result: string | null };
@@ -836,6 +845,8 @@ export interface IpcContract {
   search_messages: { args: SearchMessagesArgs; result: MessageSearchResult[] };
   sidecar_install_headroom: { args: undefined; result: SidecarStatus };
   sidecar_restart: { args: undefined; result: SidecarStatus };
+  /** True when Halv Engine is off but runs for restored sessions until quit. */
+  sidecar_runs_for_restored_sessions: { args: undefined; result: boolean };
   sidecar_stats: { args: undefined; result: SidecarStats };
   sidecar_status: { args: undefined; result: SidecarStatus };
   sidecar_update_headroom: { args: undefined; result: SidecarStatus };
@@ -922,6 +933,9 @@ export interface IpcContract {
   agent_status_mark_viewed: { args: AgentSessionIdArgs; result: void };
   agent_status_set_focus: { args: AgentStatusFocusArgs; result: void };
   terminal_notify: { args: TerminalNotifyArgs; result: void };
+  notification_permission_state: { args: undefined; result: NotificationPermissionState };
+  notification_request_permission: { args: undefined; result: NotificationPermissionState };
+  notification_open_system_settings: { args: undefined; result: void };
 }
 
 export type CommandName = keyof IpcContract;
@@ -1110,6 +1124,7 @@ export const commandNames = [
   "preferences_set_analytics_enabled",
   "preferences_set_analytics_consent",
   "preferences_set_claude_subscription_proxy",
+  "preferences_set_headroom_enabled",
   "preferences_set_conversation_defaults",
   "preferences_set_keyboard_shortcuts",
   "preferences_set_memories_enabled",
@@ -1121,6 +1136,7 @@ export const commandNames = [
   "preferences_set_worker_lane",
   "preferences_set_workflow_routing",
   "preferences_set_claude_ultracode",
+  "preferences_set_show_dot_shortcut",
   "preferences_set_routing_tier_agents",
   "project_add_local",
   "project_adoption_root",
@@ -1155,6 +1171,7 @@ export const commandNames = [
   "search_messages",
   "sidecar_install_headroom",
   "sidecar_restart",
+  "sidecar_runs_for_restored_sessions",
   "sidecar_stats",
   "sidecar_status",
   "sidecar_update_headroom",
@@ -1241,6 +1258,9 @@ export const commandNames = [
   "agent_status_mark_viewed",
   "agent_status_set_focus",
   "terminal_notify",
+  "notification_permission_state",
+  "notification_request_permission",
+  "notification_open_system_settings",
 ] as const satisfies readonly CommandName[];
 
 type MissingCommandName = Exclude<CommandName, (typeof commandNames)[number]>;

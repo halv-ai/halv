@@ -1,3 +1,4 @@
+import type { NotificationPermissionState } from "../types";
 import type {
   AgentMemory,
   AnalyticsConsent,
@@ -694,7 +695,8 @@ export class FixtureTransport implements Transport {
     keyboardShortcuts: {} as Record<string, string>,
     personality: "none",
     ponytail: "off",
-    claudeSubscriptionProxy: true,
+    claudeSubscriptionProxy: false,
+    headroomEnabled: false,
     memoriesEnabled: true,
     analyticsConsent: "on",
     analyticsConsentVersion: 2,
@@ -708,6 +710,7 @@ export class FixtureTransport implements Transport {
     taskRouting: true,
     workflowRouting: true,
     claudeUltracode: false,
+    showDotShortcut: false,
     workerLane: "auto",
     routingTierAgents: {
       cheapest: { lane: "auto", model: null, effort: null },
@@ -719,6 +722,7 @@ export class FixtureTransport implements Transport {
 
   // ?download= gives the harness a stored download id (ADR 0021).
   private downloadId: string | null = null;
+  private engineRunsForRestoredSessions = false;
 
   constructor(state: HarnessFixtureState) {
     this.state = state;
@@ -737,6 +741,24 @@ export class FixtureTransport implements Transport {
     this.preferences.analyticsConsentVersion = consent.version;
     this.preferences.analyticsConsentAsked = consent.asked;
     this.downloadId = harnessDownloadId(search?.get("download") ?? null);
+    // ?engine=off|on|restored selects the Halv Engine switch for QA.
+    // "restored" is off, but the engine runs for restored sessions until
+    // quit. Without it, the switch follows the fixture: an "off" sidecar
+    // means the switch is off.
+    const engine = search?.get("engine") ?? null;
+    if (engine === "off") {
+      this.state.sidecar = { state: "off", port: this.state.sidecar.port };
+    } else if (
+      (engine === "on" || engine === "restored") &&
+      this.state.sidecar.state === "off"
+    ) {
+      this.state.sidecar = clone(RUNNING_SIDECAR);
+    }
+    this.engineRunsForRestoredSessions = engine === "restored";
+    // A running fixture has both switches on. An "off" fixture has both off.
+    this.preferences.headroomEnabled =
+      this.state.sidecar.state !== "off" && !this.engineRunsForRestoredSessions;
+    this.preferences.claudeSubscriptionProxy = this.preferences.headroomEnabled;
     this.appUpdate = appUpdateHarnessSnapshot(state.fixture.update);
     // ?remote= selects a Settings > Mobile state for the visual harness.
     this.remote = remoteFixtureStatus(
@@ -1483,6 +1505,14 @@ export class FixtureTransport implements Transport {
           args.claudeSubscriptionProxy,
         );
         return clone(this.preferences);
+      case "preferences_set_headroom_enabled":
+        this.preferences.headroomEnabled = Boolean(args.headroomEnabled);
+        // Turning on starts the engine at once. Turning off keeps a running
+        // engine alive until quit, as the app does.
+        if (this.preferences.headroomEnabled && this.state.sidecar.state === "off") {
+          this.state.sidecar = clone(RUNNING_SIDECAR);
+        }
+        return clone(this.preferences);
       case "preferences_set_memories_enabled":
         this.preferences.memoriesEnabled = Boolean(args.memoriesEnabled);
         return clone(this.preferences);
@@ -1498,6 +1528,9 @@ export class FixtureTransport implements Transport {
         return clone(this.preferences);
       case "preferences_set_claude_ultracode":
         this.preferences.claudeUltracode = Boolean(args.claudeUltracode);
+        return clone(this.preferences);
+      case "preferences_set_show_dot_shortcut":
+        this.preferences.showDotShortcut = Boolean(args.showDotShortcut);
         return clone(this.preferences);
       case "preferences_set_routing_tier_agents":
         this.preferences.routingTierAgents = clone(
@@ -1697,6 +1730,10 @@ export class FixtureTransport implements Transport {
       case "sidecar_restart":
         this.finishHeadroomInstall();
         return clone(this.state.sidecar);
+      case "sidecar_runs_for_restored_sessions":
+        // ?engine=restored shows an engine that is off but runs for
+        // restored sessions until quit.
+        return this.engineRunsForRestoredSessions && !this.preferences.headroomEnabled;
       case "sidecar_install_headroom":
         return this.beginHeadroomInstall();
       case "sidecar_update_headroom":
@@ -3247,6 +3284,24 @@ export class FixtureTransport implements Transport {
         showHarnessNotificationCard(notification);
         return null;
       }
+      case "notification_permission_state":
+        return harnessNotificationPermission();
+      case "notification_request_permission": {
+        // A spec sets the state first. The prompt turns "notDetermined" into
+        // the answer in __harnessNotificationPromptAnswer, "granted" by default.
+        const global = window as HarnessNotificationWindow;
+        if (harnessNotificationPermission() === "notDetermined") {
+          global.__harnessNotificationPermission =
+            global.__harnessNotificationPromptAnswer ?? "granted";
+        }
+        return harnessNotificationPermission();
+      }
+      case "notification_open_system_settings": {
+        const global = window as HarnessNotificationWindow;
+        global.__harnessNotificationSettingsOpened =
+          (global.__harnessNotificationSettingsOpened ?? 0) + 1;
+        return null;
+      }
 
       case "app_update_relaunch":
         return null;
@@ -4313,6 +4368,20 @@ function isNestedRepoFolder(path: string) {
   return NESTED_REPO_FIXTURES.has(path);
 }
 
+// Specs set the macOS state of Halv notifications through these fields.
+type HarnessNotificationWindow = Window & {
+  __harnessNotificationPermission?: NotificationPermissionState;
+  __harnessNotificationPromptAnswer?: NotificationPermissionState;
+  __harnessNotificationSettingsOpened?: number;
+};
+
+function harnessNotificationPermission(): NotificationPermissionState {
+  return (
+    (window as HarnessNotificationWindow).__harnessNotificationPermission ??
+    "granted"
+  );
+}
+
 function routeFixtureCommand(name: CommandName): FixtureCommandHandler {
   return (transport, args) => transport.routeCommand(name, args);
 }
@@ -4466,6 +4535,7 @@ export const fixtureCommandHandlers: Record<
   preferences_set_analytics_enabled: routeFixtureCommand("preferences_set_analytics_enabled"),
   preferences_set_analytics_consent: routeFixtureCommand("preferences_set_analytics_consent"),
   preferences_set_claude_subscription_proxy: routeFixtureCommand("preferences_set_claude_subscription_proxy"),
+  preferences_set_headroom_enabled: routeFixtureCommand("preferences_set_headroom_enabled"),
   preferences_set_conversation_defaults: routeFixtureCommand("preferences_set_conversation_defaults"),
   preferences_set_keyboard_shortcuts: routeFixtureCommand("preferences_set_keyboard_shortcuts"),
   preferences_set_memories_enabled: routeFixtureCommand("preferences_set_memories_enabled"),
@@ -4477,6 +4547,7 @@ export const fixtureCommandHandlers: Record<
   preferences_set_worker_lane: routeFixtureCommand("preferences_set_worker_lane"),
   preferences_set_workflow_routing: routeFixtureCommand("preferences_set_workflow_routing"),
   preferences_set_claude_ultracode: routeFixtureCommand("preferences_set_claude_ultracode"),
+  preferences_set_show_dot_shortcut: routeFixtureCommand("preferences_set_show_dot_shortcut"),
   preferences_set_routing_tier_agents: routeFixtureCommand("preferences_set_routing_tier_agents"),
   project_add_local: routeFixtureCommand("project_add_local"),
   project_clone_github: routeFixtureCommand("project_clone_github"),
@@ -4511,6 +4582,7 @@ export const fixtureCommandHandlers: Record<
   search_messages: routeFixtureCommand("search_messages"),
   sidecar_install_headroom: routeFixtureCommand("sidecar_install_headroom"),
   sidecar_restart: routeFixtureCommand("sidecar_restart"),
+  sidecar_runs_for_restored_sessions: routeFixtureCommand("sidecar_runs_for_restored_sessions"),
   sidecar_stats: routeFixtureCommand("sidecar_stats"),
   sidecar_status: routeFixtureCommand("sidecar_status"),
   sidecar_update_headroom: routeFixtureCommand("sidecar_update_headroom"),
@@ -4597,6 +4669,9 @@ export const fixtureCommandHandlers: Record<
   agent_status_mark_viewed: routeFixtureCommand("agent_status_mark_viewed"),
   agent_status_set_focus: routeFixtureCommand("agent_status_set_focus"),
   terminal_notify: routeFixtureCommand("terminal_notify"),
+  notification_permission_state: routeFixtureCommand("notification_permission_state"),
+  notification_request_permission: routeFixtureCommand("notification_request_permission"),
+  notification_open_system_settings: routeFixtureCommand("notification_open_system_settings"),
 };
 
 // Worktree operations of the tree specs (ADR 0010, S7). While

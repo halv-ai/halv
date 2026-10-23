@@ -132,6 +132,11 @@ export type SidecarStatus =
       state: "error";
       message: string;
       port: number;
+    }
+  | {
+      /** The user turned Halv Engine off. This state is not an error. */
+      state: "off";
+      port: number;
     };
 
 export type SidecarInstallStage =
@@ -236,7 +241,16 @@ export type AppPreferences = {
   keyboardShortcuts: Record<string, string>;
   personality: PersonalityPreference;
   ponytail: PonytailMode;
+  /**
+   * Routes Claude subscription sessions through Halv Engine. It applies only
+   * while `headroomEnabled` is true.
+   */
   claudeSubscriptionProxy: boolean;
+  /**
+   * The master switch for Halv Engine (Headroom) on all lanes. Off by default
+   * for new installs. A change applies to new sessions only.
+   */
+  headroomEnabled: boolean;
   memoriesEnabled: boolean;
   /** Halv sends usage events only for `on` (ADR 0021). */
   analyticsConsent: AnalyticsConsent;
@@ -261,6 +275,8 @@ export type AppPreferences = {
   workflowRouting: boolean;
   /** New Claude panes start with ultracode on. */
   claudeUltracode: boolean;
+  /** Shows the Dot pin and the Dot commands. Off by default. */
+  showDotShortcut: boolean;
 };
 
 export type RoutingAgent = AppPreferences["workerLane"];
@@ -1506,3 +1522,14 @@ export type AppUpdateSnapshot = {
 };
 
 export type AppUpdateBeforeRestart = { requestId: number };
+
+/**
+ * What macOS lets Halv show. Other systems report "unknown", because the
+ * notification plugin cannot read their state.
+ */
+export type NotificationPermissionState =
+  | "granted"
+  | "denied"
+  | "notDetermined"
+  | "bannersOff"
+  | "unknown";

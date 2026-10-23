@@ -74,6 +74,7 @@ import type {
   SavingsToday,
   SavingsTotals,
   SidecarStats,
+  SidecarStatus,
   StoredMessage,
   SubagentThread,
   TerminalAttach,
@@ -111,6 +112,62 @@ test("harness preferences persist Claude subscription proxy opt-out", async () =
     (await mock.invoke<AppPreferences>("preferences_get"))
       .claudeSubscriptionProxy,
     false,
+  );
+});
+
+test("harness new installs start with Halv Engine off", async () => {
+  const mock = createUxAuditHarnessMock(
+    readHarnessSelection("?state=connect-gate"),
+  );
+  const initial = await mock.invoke<AppPreferences>("preferences_get");
+  assert.equal(initial.headroomEnabled, false);
+  assert.equal(initial.claudeSubscriptionProxy, false);
+  assert.equal(
+    (await mock.invoke<SidecarStatus>("sidecar_status")).state,
+    "off",
+  );
+});
+
+test("harness Halv Engine switch starts the engine and keeps it on off", async () => {
+  const mock = createUxAuditHarnessMock(
+    readHarnessSelection("?state=connect-gate"),
+  );
+  const enabled = await mock.invoke<AppPreferences>(
+    "preferences_set_headroom_enabled",
+    { headroomEnabled: true },
+  );
+  assert.equal(enabled.headroomEnabled, true);
+  assert.equal(enabled.claudeSubscriptionProxy, false);
+  assert.equal(
+    (await mock.invoke<SidecarStatus>("sidecar_status")).state,
+    "running",
+  );
+
+  const disabled = await mock.invoke<AppPreferences>(
+    "preferences_set_headroom_enabled",
+    { headroomEnabled: false },
+  );
+  assert.equal(disabled.headroomEnabled, false);
+  assert.equal(
+    (await mock.invoke<AppPreferences>("preferences_get")).headroomEnabled,
+    false,
+  );
+  // A running engine stays alive until quit.
+  assert.equal(
+    (await mock.invoke<SidecarStatus>("sidecar_status")).state,
+    "running",
+  );
+});
+
+test("harness running fixtures show Halv Engine on", async () => {
+  const mock = createUxAuditHarnessMock(
+    readHarnessSelection("?state=marketing-app-dark"),
+  );
+  const initial = await mock.invoke<AppPreferences>("preferences_get");
+  assert.equal(initial.headroomEnabled, true);
+  assert.equal(
+    (await mock.invoke<SidecarStatus>("sidecar_status")).state,
+    "running",
   );
 });
 

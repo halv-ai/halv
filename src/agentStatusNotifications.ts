@@ -49,7 +49,9 @@ export function paneNotificationFor(
       return null;
     }
     return {
-      kind: "completion",
+      // A failed turn is an error. It keeps its banner when the user turns
+      // off completion banners.
+      kind: next.status === "failed" ? "error" : "completion",
       key: turnKey(next),
       delayMs: COMPLETION_NOTIFY_DELAY_MS,
     };
@@ -63,7 +65,7 @@ export function paneNotificationStillDue(
   current: AgentPaneView | null,
 ) {
   if (!current) return false;
-  if (notification.kind === "completion") {
+  if (notification.kind === "completion" || notification.kind === "error") {
     return finishedUnread(current) && turnKey(current) === notification.key;
   }
   return agentPaneNeedsUser(current) && waitKey(current) === notification.key;

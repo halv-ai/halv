@@ -73,6 +73,8 @@ type StatusBarProps = {
   savingsDrawerOpen: boolean;
   /** The open terminals, for the resource chip. */
   terminalSessions?: readonly TerminalSession[];
+  /** The first item of the bar, such as the attention queue chip. */
+  leading?: ReactNode;
   onToggleSavingsDrawer: () => void;
   onOpenUsageDetails: () => void;
   onManageAccounts: (provider: WalletProvider) => void;
@@ -92,6 +94,7 @@ export function StatusBar({
   weeklyRecentDollars = null,
   savingsDrawerOpen,
   terminalSessions = [],
+  leading = null,
   onToggleSavingsDrawer,
   onOpenUsageDetails,
   onManageAccounts,
@@ -264,6 +267,7 @@ export function StatusBar({
       className="flex h-6 min-h-[24px] w-full flex-none select-none items-center gap-4 whitespace-nowrap border-t border-surface-border/25 bg-surface-sunken px-3 text-xs text-content-secondary"
       role="region"
     >
+      {leading}
       {/* Padding inside the clipped row leaves room for focus rings. */}
       <div className="-mx-1 flex min-w-0 flex-1 items-center gap-3 self-stretch overflow-hidden px-1">
         {visibleGroups.map((group) => {
