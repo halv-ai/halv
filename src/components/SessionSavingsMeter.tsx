@@ -16,6 +16,7 @@ import {
   includesRoutingEstimate,
   openSavingsMethod,
   ROUTING_NOT_ESTIMATED,
+  routingRange,
   type RoutingSavings,
 } from "../savingsMethod";
 import {
@@ -62,6 +63,7 @@ export function SessionSavingsMeter({
     conversationTotals?.dollarsUsd ?? 0,
   );
   const approximate = includesRoutingEstimate(routing);
+  const routingRangeShown = routingRange(routing);
   // The headline is context plus the low routing estimate; the Details rows
   // show each part.
   const amount = formatMoney(savedDollars + countedRoutingUsd(routing));
@@ -209,11 +211,13 @@ export function SessionSavingsMeter({
                 {routing.state === "estimated"
                   ? t("{source}: {amount}", {
                       source: t("Routing"),
-                      amount: t("\u2248 {amount} (range {low} to {high})", {
-                        amount: formatMoney(routing.netUsd),
-                        low: formatMoney(routing.lowUsd),
-                        high: formatMoney(routing.highUsd),
-                      }),
+                      amount: routingRangeShown
+                        ? t("\u2248 {amount} (range {low} to {high})", {
+                            amount: formatMoney(routing.netUsd),
+                            low: formatMoney(routingRangeShown.lowUsd),
+                            high: formatMoney(routingRangeShown.highUsd),
+                          })
+                        : t("\u2248 {amount}", { amount: formatMoney(routing.netUsd) }),
                     })
                   : t("Routing savings not estimated yet")}
               </span>

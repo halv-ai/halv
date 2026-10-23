@@ -3,6 +3,7 @@ import { accountStatusStore } from "../gate";
 import { cloudAccess } from "../halvCloud.ts";
 import { formatMoney, useT, type Translate } from "../i18n/runtime";
 import {
+  routingRange,
   routingSavingsFromTotals,
   type RoutingSavings,
 } from "../savingsMethod.ts";
@@ -145,6 +146,8 @@ export function TaskBoard({
     routeSnapshot.conversationId === conversationId ? routeSnapshot.report : null;
   const routingSavings =
     routingSavingsOverride ?? routingSavingsFromTotals(report?.totals);
+  // The range shows only when calibrated chains give a high end (ADR 0016).
+  const routingRangeShown = routingRange(routingSavings);
   const costById = new Map(
     (report?.routeCosts ?? []).map((cost) => [cost.routeId, cost]),
   );
@@ -267,11 +270,11 @@ export function TaskBoard({
         </div>
       </header>
       <p className="task-board-tier-summary">{savedLabel(routes, t)}</p>
-      {routingSavings.state === "estimated" ? (
+      {routingRangeShown ? (
         <p className="task-board-tier-summary">
           {t("Range {low} to {high}", {
-            low: formatMoney(routingSavings.lowUsd),
-            high: formatMoney(routingSavings.highUsd),
+            low: formatMoney(routingRangeShown.lowUsd),
+            high: formatMoney(routingRangeShown.highUsd),
           })}
         </p>
       ) : null}

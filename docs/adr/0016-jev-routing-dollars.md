@@ -98,6 +98,7 @@ What the table means at list prices:
 - A total that holds a routing estimate shows "≈": the status bar, the drawer, the session meter, and "all time".
 - The Details rows split context and routing: "Routing: ≈ $0.84 (range $0.84 to $2.65)". The counted value is the low end.
 - The task rail header shows "≈ $0.42 saved by routing". It shows the range and the cost of each route ("Cost $0.43 on claude-sonnet-5-5").
+- The totals count the low estimate of a floor or thin chain as its point and high end, and the rows keep the stored values. The UI shows a range only when the ends differ at cents, else only "≈ $0.84". On a Fable default with no calibrated cell, the floor k_high of 1 gave $10.76 to $853.96 (2026-10-22).
 - "How Halv estimates savings" names the bench calibration and the floor rule, and shows the calibration version.
 - The agent-facing MCP tools give dollars: "Current Halv session savings: ≈ $0.42 at API prices (412,300 measured tokens)."
 

@@ -18,6 +18,7 @@ import {
   includesRoutingEstimate,
   openSavingsMethod,
   ROUTING_NOT_ESTIMATED,
+  routingRange,
   type RoutingSavings,
 } from "../savingsMethod";
 import {
@@ -193,6 +194,7 @@ export function SavingsPanel({
       ? null
       : (weeklyDollarsUsd ?? 0);
   const approximate = includesRoutingEstimate(routing);
+  const routingRangeShown = routingRange(routing);
   // The weekly dollars hold the low routing estimate. "By source" splits it.
   const contextDollars =
     weekDollars === null ? null : weekDollars - countedRoutingUsd(routing);
@@ -383,13 +385,15 @@ export function SavingsPanel({
             <MetricRow
               label={t("Routing")}
               value={
-                routing.state === "estimated"
-                  ? t("\u2248 {amount} (range {low} to {high})", {
-                      amount: formatMoney(routing.netUsd),
-                      low: formatMoney(routing.lowUsd),
-                      high: formatMoney(routing.highUsd),
-                    })
-                  : t("Routing savings not estimated yet")
+                routing.state !== "estimated"
+                  ? t("Routing savings not estimated yet")
+                  : routingRangeShown
+                    ? t("\u2248 {amount} (range {low} to {high})", {
+                        amount: formatMoney(routing.netUsd),
+                        low: formatMoney(routingRangeShown.lowUsd),
+                        high: formatMoney(routingRangeShown.highUsd),
+                      })
+                    : t("\u2248 {amount}", { amount: formatMoney(routing.netUsd) })
               }
             />
           </div>

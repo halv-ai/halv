@@ -6,6 +6,7 @@ import {
   includesRoutingEstimate,
   laneIsPlan,
   ROUTING_NOT_ESTIMATED,
+  routingRange,
   routingSavingsFromTotals,
 } from "../src/savingsMethod.ts";
 
@@ -62,4 +63,17 @@ test("no priced chain keeps routing not estimated", () => {
     ROUTING_NOT_ESTIMATED,
   );
   assert.equal(countedRoutingUsd(ROUTING_NOT_ESTIMATED), 0);
+});
+
+function estimated(lowUsd: number, highUsd: number) {
+  return { state: "estimated" as const, netUsd: lowUsd, lowUsd, highUsd, chains: 2 };
+}
+
+test("routing shows a range only when the high end is above the low end at cents", () => {
+  assert.equal(routingRange(ROUTING_NOT_ESTIMATED), null);
+  assert.equal(routingRange(estimated(10.76, 10.76)), null);
+  assert.equal(routingRange(estimated(10.76, 10.764)), null);
+  assert.equal(routingRange(estimated(0, 0)), null);
+  assert.deepEqual(routingRange(estimated(0.84, 2.65)), { lowUsd: 0.84, highUsd: 2.65 });
+  assert.deepEqual(routingRange(estimated(0, 0.01)), { lowUsd: 0, highUsd: 0.01 });
 });

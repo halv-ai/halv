@@ -136,13 +136,20 @@ pub(crate) fn routing_totals(
     let (filter, value) = scope.filter();
     // A chain counts at most zero loss (ADR 0016). The signed estimate
     // stays in the row for the details.
+    // A floor or thin chain has no bench evidence for its upper values.
+    // Its point and high end count as its low estimate (ADR 0016,
+    // "Display"). The row keeps the stored values for audit.
     let sql = format!(
         "SELECT
             COUNT(CASE WHEN usage != 'none' THEN 1 END),
             COUNT(CASE WHEN usage = 'none' THEN 1 END),
             COALESCE(SUM(CASE WHEN usage != 'none' THEN MAX(net_low_usd, 0.0) END), 0.0),
-            COALESCE(SUM(CASE WHEN usage != 'none' THEN MAX(net_point_usd, 0.0) END), 0.0),
-            COALESCE(SUM(CASE WHEN usage != 'none' THEN MAX(net_high_usd, 0.0) END), 0.0),
+            COALESCE(SUM(CASE WHEN usage != 'none' THEN MAX(
+                CASE WHEN k_source IN ('floor', 'thin') THEN net_low_usd
+                     ELSE net_point_usd END, 0.0) END), 0.0),
+            COALESCE(SUM(CASE WHEN usage != 'none' THEN MAX(
+                CASE WHEN k_source IN ('floor', 'thin') THEN net_low_usd
+                     ELSE net_high_usd END, 0.0) END), 0.0),
             COUNT(CASE WHEN usage != 'none' AND k_source = 'bench' THEN 1 END),
             COUNT(CASE WHEN usage != 'none' AND outcome = 'unreported' THEN 1 END)
          FROM routing_savings WHERE {filter}"
@@ -627,6 +634,74 @@ mod tests {
         assert_eq!(totals.chains, 1);
         assert!((totals.low_usd - settled[0].net_low_usd).abs() < 1e-12);
         assert!(totals.high_usd >= totals.low_usd);
+        // No cell has bench evidence for this pair, so the range collapses.
+        assert_eq!(settled[0].k_source, "floor");
+        assert!(settled[0].net_high_usd > settled[0].net_low_usd);
+        assert_eq!(totals.high_usd, totals.low_usd);
+    }
+
+    /// Inserts one settled row with the given source and net values.
+    fn insert_chain(
+        connection: &Connection,
+        id: &str,
+        outcome: &str,
+        k_source: &str,
+        net: (f64, Option<f64>, f64),
+    ) {
+        connection
+            .execute(
+                "INSERT INTO routing_savings (
+                    chain_root_id, session_id, conversation_id, outcome, attempts, usage,
+                    default_model, routed_models, actual_usd, overhead_usd,
+                    counterfactual_low_usd, counterfactual_point_usd, counterfactual_high_usd,
+                    net_low_usd, net_point_usd, net_high_usd, k_low, k_point, k_high,
+                    k_source, estimator_version, calibration_version, price_version,
+                    occurred_at, occurred_local_date, settled_at
+                 ) VALUES (?1, 'session', 'conversation', ?2, 1, 'measured',
+                           'claude-fable-5-1', 'claude-sonnet-5-5', 1.0, 0.01,
+                           1.0, 1.0, 4.0, ?3, ?4, ?5, 0.25, 0.25, 1.0,
+                           ?6, 'jev-chain-1', 'test', '2026-10-15',
+                           '2026-10-16T10:00:00Z', '2026-10-16', '2026-10-16T10:00:00Z')",
+                params![id, outcome, net.0, net.1, net.2, k_source],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn floor_and_thin_chains_count_their_low_estimate_as_the_high_end() {
+        let connection = connection();
+        let chains = [
+            ("floor", "passed", "floor", (0.5, Some(0.5), 9.0)),
+            ("thin", "passed", "thin", (0.25, Some(0.4), 3.0)),
+            ("open", "unreported", "floor", (-1.0, None, 2.0)),
+        ];
+        for (id, outcome, k_source, net) in chains {
+            insert_chain(&connection, id, outcome, k_source, net);
+        }
+        let totals = routing_totals(&connection, RoutingScope::All).unwrap();
+        assert_eq!(totals.chains, 3);
+        assert!((totals.low_usd - 0.75).abs() < 1e-12);
+        assert!((totals.point_usd - 0.75).abs() < 1e-12);
+        assert!((totals.high_usd - 0.75).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_calibrated_chain_keeps_its_range_next_to_a_floor_chain() {
+        let connection = connection();
+        let chains = [
+            ("bench", "passed", "bench", (0.5, Some(1.0), 2.0)),
+            ("floor", "passed", "floor", (0.25, Some(0.25), 9.0)),
+            ("exact", "passed", "exact", (-0.1, Some(-0.1), -0.1)),
+        ];
+        for (id, outcome, k_source, net) in chains {
+            insert_chain(&connection, id, outcome, k_source, net);
+        }
+        let totals = routing_totals(&connection, RoutingScope::All).unwrap();
+        assert_eq!(totals.chains, 3);
+        assert_eq!(totals.bench_chains, 1);
+        assert!((totals.low_usd - 0.75).abs() < 1e-12);
+        assert!((totals.point_usd - 1.25).abs() < 1e-12);
+        assert!((totals.high_usd - 2.25).abs() < 1e-12);
     }
 
     #[test]

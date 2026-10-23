@@ -69,6 +69,20 @@ export function routingSavingsFromTotals(
   };
 }
 
+/**
+ * The routing range to show, or null when the UI shows only the counted
+ * value. Storage counts a chain without bench evidence at its low end, so
+ * the range exists only when calibrated chains add a high end. A range
+ * whose ends round to the same cent is not a range.
+ */
+export function routingRange(
+  routing: RoutingSavings,
+): { lowUsd: number; highUsd: number } | null {
+  if (routing.state !== "estimated") return null;
+  if (Math.round(routing.highUsd * 100) <= Math.round(routing.lowUsd * 100)) return null;
+  return { lowUsd: routing.lowUsd, highUsd: routing.highUsd };
+}
+
 /** The counted routing dollars: 0 when routing is not estimated. */
 export function countedRoutingUsd(routing: RoutingSavings): number {
   return routing.state === "estimated" ? routing.netUsd : 0;
