@@ -115,6 +115,33 @@ xAI marks the Anthropic compatibility endpoint as deprecated. A native Grok
 Build adapter is the fallback if xAI removes that endpoint; it is not part of
 this lane.
 
+## Engine upstream allowlist
+
+Halv starts the engine with `HEADROOM_ALLOWED_BASE_URLS`.
+This list puts the SSRF guard of Headroom in allow-only mode.
+The list holds these hosts:
+
+- The loopback hosts `localhost`, `127.0.0.1` and `[::1]`.
+- The upstream host of each lane: Anthropic, Z.ai and xAI.
+- The host of `ANTHROPIC_BASE_URL` in the Halv environment.
+- The host of each registered session base URL.
+
+The engine gives HTTP 400 to an `X-Headroom-Base-Url` host that is not on the list.
+A `claudeApiKey` session with a new base URL host goes direct until the next engine start.
+Halv does not restart a running engine for a new host.
+A restart stops the requests of all other sessions.
+
+Halv adds only a host that Python `urllib.parse` can read.
+A bracketed host must be an IPv6 address without a zone ID.
+Each other host holds only ASCII letters, digits, `.`, `-` and `_`.
+A bad base URL sends only its own session direct.
+The other lanes keep the engine.
+
+Limit: the session row does not hold the session base URL.
+Thus a restored `claudeApiKey` pane with a custom base URL host gets HTTP 400 after an app restart.
+A new session with the same base URL registers the host again.
+The host then applies at the next engine start.
+
 ## Codex lane
 
 The `codexChatGpt` lane keeps ChatGPT OAuth inside the Codex CLI.

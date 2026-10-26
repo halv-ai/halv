@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -214,6 +214,20 @@ function runFastGate() {
     "-D",
     "warnings",
   ]);
+  // The private repository also holds the account server in server/. The
+  // public repository does not, so the gate lints the server only when it exists.
+  if (existsSync(resolve(REPO_ROOT, "server", "Cargo.toml"))) {
+    runCommand("Clippy (server)", "cargo", [
+      ...cargoPrefix,
+      "clippy",
+      "--all-targets",
+      "--manifest-path",
+      "server/Cargo.toml",
+      "--",
+      "-D",
+      "warnings",
+    ]);
+  }
   runCommand("Rust tests (Tauri)", "cargo", [
     ...cargoPrefix,
     "test",

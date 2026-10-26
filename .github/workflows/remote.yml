@@ -1,7 +1,7 @@
 name: Remote
 
 # Checks of the halv-remote crate for the mobile remote control (ADR 0009, docs/remote-protocol.md).
-# The relay and the phone app are not in this repository.
+# The relay and the phone app are not in the public repository, so this workflow does not check them.
 
 on:
   pull_request:

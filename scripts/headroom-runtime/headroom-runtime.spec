@@ -3,6 +3,7 @@
 
 import os
 from pathlib import Path
+import sys
 
 from PyInstaller.utils.hooks import (
     collect_all,
@@ -15,8 +16,27 @@ from PyInstaller.utils.hooks import (
 SCRIPT_DIR = Path(SPECPATH).resolve()
 SOURCE_DIR = Path(os.environ["HALV_HEADROOM_SOURCE_DIR"]).resolve()
 BUILD_MANIFEST = Path(os.environ["HALV_HEADROOM_BUILD_MANIFEST"]).resolve()
+# Offline data and license texts that the build script prepares before
+# PyInstaller runs (scripts/headroom-runtime/halv_runtime_build.py).
+LICENSES_DIR = Path(os.environ["HALV_HEADROOM_LICENSES_DIR"]).resolve()
+TIKTOKEN_DIR = Path(os.environ["HALV_HEADROOM_TIKTOKEN_DIR"]).resolve()
+METADATA_DIR = Path(os.environ["HALV_HEADROOM_METADATA_DIR"]).resolve()
+REPOSITORY = os.environ["HALV_HEADROOM_REPOSITORY"]
+COMMIT = os.environ["HALV_HEADROOM_COMMIT"]
+SOURCE_DATE_EPOCH = int(os.environ["SOURCE_DATE_EPOCH"])
 
-datas = [(str(BUILD_MANIFEST), ".")]
+sys.path.insert(0, str(SCRIPT_DIR))
+from halv_runtime_build import normalize_metadata_toc, normalize_sysconfig_toc  # noqa: E402
+
+for required in (LICENSES_DIR / "INDEX.json", TIKTOKEN_DIR):
+    if not required.exists():
+        raise SystemExit(f"headroom-runtime.spec: missing build input {required}")
+
+datas = [
+    (str(BUILD_MANIFEST), "."),
+    (str(LICENSES_DIR), "licenses/python"),
+    (str(TIKTOKEN_DIR), "tiktoken-cache"),
+]
 binaries = []
 hiddenimports = []
 
@@ -151,7 +171,14 @@ analysis = Analysis(
     optimize=0,
 )
 
-python_archive = PYZ(analysis.pure)
+# uv writes its Python install folder into the sysconfig data module.
+pure_modules = normalize_sysconfig_toc(
+    list(analysis.pure),
+    METADATA_DIR / "sysconfig",
+    [os.path.realpath(sys.base_prefix), sys.base_prefix],
+)
+
+python_archive = PYZ(pure_modules)
 
 executable = EXE(
     python_archive,
@@ -171,10 +198,20 @@ executable = EXE(
     entitlements_file=None,
 )
 
+# Replace dist-info files that carry the build path or the install time.
+runtime_datas = normalize_metadata_toc(
+    list(analysis.datas),
+    METADATA_DIR / "dist-info",
+    SOURCE_DIR,
+    REPOSITORY,
+    COMMIT,
+    SOURCE_DATE_EPOCH,
+)
+
 collection = COLLECT(
     executable,
     analysis.binaries,
-    analysis.datas,
+    runtime_datas,
     strip=False,
     upx=False,
     upx_exclude=[],

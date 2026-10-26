@@ -19,6 +19,7 @@ import type {
   Automation,
   AutomationDraft,
   BranchStatus,
+  BriefSharing,
   BrowserAnnotationTarget,
   BrowserSettings,
   BrowserStylePreview,
@@ -389,6 +390,10 @@ export type AnalyticsConsentArgs = {
 export type MemoriesEnabledArgs = { memoriesEnabled: boolean };
 export type TaskRoutingArgs = { taskRouting: boolean };
 export type WorkflowRoutingArgs = { workflowRouting: boolean };
+/** `unset` is not an answer, so the command accepts only the two answers. */
+export type BriefSharingArgs = {
+  briefSharing: Exclude<BriefSharing, "unset">;
+};
 export type ClaudeUltracodeArgs = { claudeUltracode: boolean };
 export type ShowDotShortcutArgs = { showDotShortcut: boolean };
 export type WorkerLaneArgs = { workerLane: AppPreferences["workerLane"] };
@@ -809,6 +814,7 @@ export interface IpcContract {
   preferences_set_task_routing: { args: TaskRoutingArgs; result: AppPreferences };
   preferences_set_worker_lane: { args: WorkerLaneArgs; result: AppPreferences };
   preferences_set_workflow_routing: { args: WorkflowRoutingArgs; result: AppPreferences };
+  preferences_set_brief_sharing: { args: BriefSharingArgs; result: AppPreferences };
   preferences_set_claude_ultracode: { args: ClaudeUltracodeArgs; result: AppPreferences };
   preferences_set_show_dot_shortcut: { args: ShowDotShortcutArgs; result: AppPreferences };
   preferences_set_routing_tier_agents: { args: RoutingTierAgentsArgs; result: AppPreferences };
@@ -1135,6 +1141,7 @@ export const commandNames = [
   "preferences_set_task_routing",
   "preferences_set_worker_lane",
   "preferences_set_workflow_routing",
+  "preferences_set_brief_sharing",
   "preferences_set_claude_ultracode",
   "preferences_set_show_dot_shortcut",
   "preferences_set_routing_tier_agents",
@@ -1268,6 +1275,38 @@ const commandNamesAreComplete: MissingCommandName extends never ? true : never =
   true;
 void commandNamesAreComplete;
 
+/**
+ * The commands that start an agent pane. Such a pane can route tasks, and
+ * routing sends task briefs to halv.ai (ADR 0023).
+ */
+export const AGENT_LAUNCH_COMMANDS = [
+  "agent_terminal_create",
+  "agent_terminal_duplicate",
+  "agent_ghostty_launch",
+] as const satisfies readonly CommandName[];
+
+export type AgentLaunchCommand = (typeof AGENT_LAUNCH_COMMANDS)[number];
+
+/**
+ * Runs before each agent launch command. The launch waits for the promise.
+ * The task brief question uses it, so no launch path can skip the question.
+ */
+export type AgentLaunchGate = <K extends AgentLaunchCommand>(
+  name: K,
+  args: IpcContract[K]["args"],
+) => Promise<void>;
+
+let agentLaunchGate: AgentLaunchGate | null = null;
+
+/** Sets or removes the gate. `null` lets every launch start at once. */
+export function setAgentLaunchGate(gate: AgentLaunchGate | null) {
+  agentLaunchGate = gate;
+}
+
+function isAgentLaunchCommand(name: CommandName): name is AgentLaunchCommand {
+  return (AGENT_LAUNCH_COMMANDS as readonly CommandName[]).includes(name);
+}
+
 function camelCase(value: string) {
   return value.replace(/_([a-z])/g, (_, letter: string) =>
     letter.toUpperCase(),
@@ -1281,8 +1320,15 @@ export function createIpc(transport: Transport): Ipc {
     const prefix = name.slice(0, separator);
     const method = camelCase(name.slice(separator + 1));
     const group = (groups[prefix] ??= {});
-    group[method] = (args: IpcContract[typeof name]["args"]) =>
-      transport.invoke(name, args);
+    group[method] = isAgentLaunchCommand(name)
+      ? async (args: IpcContract[typeof name]["args"]) => {
+          // A gate failure never blocks the launch. The launch then starts
+          // with the saved answer, and Rust routes only after a yes.
+          await agentLaunchGate?.(name, args as never).catch(() => undefined);
+          return transport.invoke(name, args);
+        }
+      : (args: IpcContract[typeof name]["args"]) =>
+          transport.invoke(name, args);
   }
   return Object.assign(groups, {
     events: {

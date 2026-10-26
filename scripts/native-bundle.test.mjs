@@ -1,24 +1,29 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   buildManifest,
   loadRuntimeLock,
 } from "./headroom-runtime-lib.mjs";
 import {
+  isMainModule,
   runChecked,
   verifyBundleLayout,
+  verifyThirdPartyLicenses,
 } from "./verify-native-bundle.mjs";
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,6 +40,7 @@ function licenseSources() {
     "orca-LICENSE": join(licenses, "orca-LICENSE"),
     "ponytail-LICENSE": join(licenses, "ponytail-LICENSE"),
     "lucide-LICENSE": join(licenses, "lucide-LICENSE"),
+    "THIRD_PARTY_LICENSES.md": join(licenses, "THIRD_PARTY_LICENSES.md"),
   };
 }
 
@@ -131,6 +137,67 @@ test("requires each license file and its source content", () => {
     );
   } finally {
     rmSync(layout.cleanupRoot, { recursive: true, force: true });
+  }
+});
+
+test("requires a third-party license list that names the key packages", () => {
+  const layout = createLayout();
+  const installed = join(layout.resources, "licenses", "THIRD_PARTY_LICENSES.md");
+  const verify = () =>
+    verifyBundleLayout({
+      root: layout.root,
+      target: "x86_64-unknown-linux-gnu",
+      execute: false,
+    });
+  try {
+    rmSync(installed, { force: true });
+    assert.throws(verify, /installed third-party license list is missing/);
+    writeFileSync(installed, "\n");
+    assert.throws(verify, /installed third-party license list is empty/);
+    writeFileSync(
+      installed,
+      "# Third-party licenses\n\n## Rust crates\n\n### reqwest 0.12.28\n\n" +
+        "## npm packages\n\n### react 18.3.1\n\n### tauri 2.0.0\n",
+    );
+    assert.throws(verify, /does not name the tauri crate/);
+    writeFileSync(
+      installed,
+      "# Third-party licenses\n\n## Rust crates\n\n### tauri 2.11.5\n\n" +
+        "### reqwest 0.12.28\n\n## npm packages\n\n### react-dom 18.3.1\n",
+    );
+    assert.throws(verify, /does not name the react npm package/);
+  } finally {
+    rmSync(layout.cleanupRoot, { recursive: true, force: true });
+  }
+});
+
+test("the committed third-party license list names the key packages", () => {
+  const path = licenseSources()["THIRD_PARTY_LICENSES.md"];
+  assert.equal(verifyThirdPartyLicenses(path), path);
+});
+
+test("runs when Node starts the verifier through a symlink", () => {
+  const root = mkdtempSync(join(tmpdir(), "halv-native-bundle-link-"));
+  try {
+    const scripts = join(APP_ROOT, "scripts");
+    const linkedScripts = join(root, "scripts");
+    // A junction needs no special right on Windows. Other platforms ignore the type.
+    symlinkSync(scripts, linkedScripts, "junction");
+    const linkedVerifier = join(linkedScripts, "verify-native-bundle.mjs");
+    const verifierUrl = pathToFileURL(
+      realpathSync(join(scripts, "verify-native-bundle.mjs")),
+    ).href;
+    // The fallback for Node versions without import.meta.main.
+    assert.equal(isMainModule(verifierUrl, undefined, linkedVerifier), true);
+    assert.equal(isMainModule(verifierUrl, undefined, join(root, "other.mjs")), false);
+
+    const result = spawnSync(process.execPath, [linkedVerifier, "--help"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Usage: node scripts\/verify-native-bundle\.mjs/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

@@ -1332,15 +1332,26 @@ pub async fn account_publish_receipt(
         .map_err(|error| format!("Receipt response was not valid JSON: {error}"))
 }
 
+/// Halv sends a task brief only after the user agreed to brief sharing (ADR 0023).
+fn require_brief_sharing(sharing: crate::preferences::BriefSharing) -> Result<(), String> {
+    if sharing == crate::preferences::BriefSharing::Allowed {
+        Ok(())
+    } else {
+        Err("Brief sharing is off. Halv sends no task brief.".to_string())
+    }
+}
+
 #[tauri::command]
 pub async fn route_task(
     storage: State<'_, Storage>,
+    preferences: State<'_, crate::preferences::PreferencesManager>,
     brief: String,
 ) -> Result<RouteDecision, String> {
     let brief = brief.trim();
     if brief.is_empty() {
         return Err("Task brief is empty.".to_string());
     }
+    require_brief_sharing(preferences.get()?.brief_sharing)?;
     let _guard = halv_account_lock().lock().await;
     let (server_url, token) = current_halv_session(&storage)?;
     let response = api_client()
@@ -3594,6 +3605,14 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn route_task_sends_a_brief_only_after_brief_sharing_is_allowed() {
+        use crate::preferences::BriefSharing;
+        assert!(require_brief_sharing(BriefSharing::Allowed).is_ok());
+        assert!(require_brief_sharing(BriefSharing::Unset).is_err());
+        assert!(require_brief_sharing(BriefSharing::Declined).is_err());
+    }
 
     #[test]
     fn checkout_payload_has_no_client_selected_currency() {

@@ -13,9 +13,22 @@ permissions:
   contents: read
 
 env:
-  RELEASE_REPOSITORY: pedr0v/halv-releases
+  # Releases publish to the repository that runs this workflow, with
+  # GITHUB_TOKEN.
+  RELEASE_REPOSITORY: ${{ github.repository }}
+  # Halv 1.0.0 and older check only this repository for updates. Each release
+  # also puts its latest.json there, with RELEASE_REPO_TOKEN.
+  LEGACY_RELEASE_REPOSITORY: pedr0v/halv-releases
   RELEASE_NOTES: |
     ## What's new
+    - Halv asks before it sends a task brief to Halv Cloud for routing. Nothing goes out until you say yes, and you can change the answer in Settings.
+    - Cloud handoff is off for now. The Automations panel no longer offers it.
+    - Halv Engine now runs Headroom 0.41, built from the public fork at github.com/halv-ai/headroom. Halv Engine stays off by default.
+    - Halv releases now come from the public repository github.com/halv-ai/halv.
+    - Each release attaches SHA256SUMS, runtime file manifests, SBOMs and build provenance. RELEASING.md shows how to check them, and REPRODUCING.md shows how to rebuild the runtime.
+    - The installers now include the license text of each third-party Rust crate and npm package.
+
+    ## 1.0.1
     - Attention queue: agents that wait for you and results that you did not see yet, oldest first, at the bottom of the sidebar. Cmd+Shift+U (Ctrl+Shift+U on Windows and Linux) opens the next one.
     - Halv Engine, the context compression proxy, is now optional and off by default, also after this update. Agents connect directly to their provider. Turn it on in Settings when you want compression. Chat mode still starts it when you send a message.
     - macOS notifications: Settings shows whether macOS allows Halv banners and can send a test notification. A finished agent no longer hides the banner of a failed one.
@@ -56,7 +69,7 @@ env:
     - No account wall before your first result: Halv asks for an account only after it shows what it saved.
     - Windows: no more console windows from background processes, better agent CLI detection, and a more reliable ChatGPT sign-in.
     - Security fixes.
-  WEBSITE_REPOSITORY: pedr0v/halv-web
+  WEBSITE_REPOSITORY: ${{ vars.WEBSITE_REPOSITORY || 'pedr0v/halv-web' }}
 
 concurrency:
   group: ${{ github.event_name == 'repository_dispatch' && 'halv-release' || format('halv-ci-{0}', github.ref) }}
@@ -106,6 +119,17 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Fetch Rust dependencies for the license check
+        run: |
+          cargo fetch --manifest-path src-tauri/Cargo.toml
+          cargo fetch --manifest-path src-tauri/supervisor/Cargo.toml
+
+      - name: Check third-party licenses
+        run: pnpm check:third-party-licenses
+
+      - name: Test the third-party license collector
+        run: pnpm test:third-party-licenses
+
       - name: Validate frozen Headroom packaging contract
         run: pnpm test:headroom-runtime
 
@@ -141,7 +165,9 @@ jobs:
 
   validate-release:
     name: Validate release
-    if: github.event_name == 'repository_dispatch' && github.actor_id == '34296734'
+    # Only the public repository publishes releases, so each release comes
+    # from public code.
+    if: github.event_name == 'repository_dispatch' && github.actor_id == '34296734' && github.repository == 'halv-ai/halv'
     needs: test
     runs-on: ubuntu-22.04
     permissions:
@@ -194,7 +220,7 @@ jobs:
 
   prepare-release:
     name: Authorize and prepare draft release
-    if: github.event_name == 'repository_dispatch' && github.actor_id == '34296734'
+    if: github.event_name == 'repository_dispatch' && github.actor_id == '34296734' && github.repository == 'halv-ai/halv'
     needs: validate-release
     runs-on: ubuntu-22.04
     environment: release
@@ -223,7 +249,7 @@ jobs:
       - name: Create or reuse one draft release
         id: release
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
         run: |
           set -euo pipefail
@@ -233,7 +259,9 @@ jobs:
               exit 1
             fi
           else
-            gh release create "$TAG_NAME" --repo "$RELEASE_REPOSITORY" --target main --draft \
+            # The protected tag already exists. --verify-tag stops gh before
+            # GitHub can make a new tag from the default branch.
+            gh release create "$TAG_NAME" --repo "$RELEASE_REPOSITORY" --verify-tag --draft \
               --title "Halv $TAG_NAME" \
               --notes "$RELEASE_NOTES"
             release_json="$(gh release view "$TAG_NAME" --repo "$RELEASE_REPOSITORY" --json databaseId,isDraft)"
@@ -246,6 +274,64 @@ jobs:
             exit 1
           fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+  app-sbom:
+    name: Generate app SBOM
+    # The SBOM tool runs in this job without release access and without
+    # secrets. The publish job attaches the file to the release.
+    if: github.event_name == 'repository_dispatch'
+    needs: validate-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tested release commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.validate-release.outputs.release_sha }}
+          persist-credentials: false
+
+      - name: Stage app lockfiles for the SBOM
+        id: app-sbom
+        env:
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          # The app SBOM lists the Rust crates of the app and its supervisor
+          # sidecar, and the npm packages of the frontend.
+          source_dir="$RUNNER_TEMP/halv-app-sbom-source"
+          rm -rf "$source_dir"
+          mkdir -p "$source_dir/src-tauri/supervisor"
+          cp package.json pnpm-lock.yaml "$source_dir/"
+          cp src-tauri/Cargo.toml src-tauri/Cargo.lock "$source_dir/src-tauri/"
+          cp src-tauri/supervisor/Cargo.toml src-tauri/supervisor/Cargo.lock "$source_dir/src-tauri/supervisor/"
+          echo "source_dir=$source_dir" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate app SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_SOURCE_NAME: halv
+          SYFT_SOURCE_VERSION: ${{ steps.app-sbom.outputs.version }}
+        with:
+          path: ${{ steps.app-sbom.outputs.source_dir }}
+          format: cyclonedx-json
+          syft-version: v1.54.0
+          # The action uses the token only for uploads, and both uploads are
+          # off. An empty token keeps it out of the environment of syft.
+          github-token: ""
+          output-file: ${{ runner.temp }}/sbom-halv-app.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Keep app SBOM for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-halv-app
+          path: ${{ runner.temp }}/sbom-halv-app.cdx.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
 
   build-artifacts:
     name: Build ${{ matrix.target }}
@@ -287,16 +373,6 @@ jobs:
           path: src-tauri/resources/headroom-runtime
           key: headroom-runtime-v1-${{ matrix.platform }}-${{ matrix.target }}-${{ hashFiles('scripts/headroom-runtime.lock.json', 'scripts/build-headroom-runtime.mjs', 'scripts/headroom-runtime-lib.mjs', 'scripts/headroom-runtime/**/*') }}
 
-      - name: Require private Headroom checkout token
-        shell: bash
-        env:
-          HEADROOM_REPO_TOKEN: ${{ secrets.HEADROOM_REPO_TOKEN }}
-        run: |
-          if [[ -z "$HEADROOM_REPO_TOKEN" ]]; then
-            echo "HEADROOM_REPO_TOKEN is required to read the pinned pedr0v/headroom commit."
-            exit 1
-          fi
-
       - name: Preserve LF in immutable Headroom checkout
         if: steps.headroom-runtime-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -309,9 +385,8 @@ jobs:
         if: steps.headroom-runtime-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: pedr0v/headroom
-          ref: 1dc3f3a0c0f39a2965c9c9c70c10768c8591fb9f
-          token: ${{ secrets.HEADROOM_REPO_TOKEN }}
+          repository: halv-ai/headroom
+          ref: 284912cf4f65de8f6084b2a2fbffefcd85b6b1ca
           fetch-depth: 0
           path: .headroom-source
           persist-credentials: false
@@ -442,6 +517,9 @@ jobs:
           set -euo pipefail
           if [[ "$HALV_SIGN_HEADROOM" != "1" ]]; then
             echo "Unsigned macOS build; nested Headroom signing skipped."
+            # The script still writes both runtime file manifests, with
+            # signing "none".
+            node scripts/sign-headroom-runtime.mjs
             exit 0
           fi
           certificate_path="$RUNNER_TEMP/halv-apple-certificate.p12"
@@ -478,6 +556,25 @@ jobs:
 
           HALV_SIGN_HEADROOM=1 node scripts/sign-headroom-runtime.mjs
           echo "HALV_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+
+      - name: Write Headroom runtime file manifests
+        if: ${{ !startsWith(matrix.platform, 'macos') }}
+        shell: bash
+        env:
+          HALV_SIGN_HEADROOM: "0"
+        # Linux and Windows do not sign the runtime files. The script checks
+        # the runtime against runtime-files.sha256.json, then writes
+        # runtime-files.signed.sha256.json with signing "none". It also puts
+        # both release copies in src-tauri/target/headroom-runtime-manifests.
+        run: node scripts/sign-headroom-runtime.mjs
+
+      - name: Read Headroom runtime version
+        id: runtime-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./scripts/headroom-runtime.lock.json').runtimeVersion")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Prepare Windows Artifact Signing
         if: matrix.platform == 'windows-2025' && vars.USE_AZURE_SIGNING == 'true'
@@ -589,7 +686,9 @@ jobs:
       - name: Build Tauri artifacts
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          # Without owner and repo inputs, tauri-action uploads to the draft
+          # release in the repository that runs this workflow.
+          GITHUB_TOKEN: ${{ github.token }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ startsWith(matrix.platform, 'macos') && secrets.APPLE_CERTIFICATE || '' }}
@@ -603,8 +702,6 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ matrix.platform == 'windows-2025' && vars.USE_AZURE_SIGNING == 'true' && secrets.AZURE_CLIENT_SECRET || '' }}
           AZURE_TENANT_ID: ${{ matrix.platform == 'windows-2025' && vars.USE_AZURE_SIGNING == 'true' && secrets.AZURE_TENANT_ID || '' }}
         with:
-          owner: pedr0v
-          repo: halv-releases
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           tagName: ${{ needs.validate-release.outputs.tag_name }}
           releaseName: Halv ${{ needs.validate-release.outputs.tag_name }}
@@ -732,7 +829,60 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
+      - name: Write the signed Windows runtime manifest after Tauri signing
+        # With Windows Artifact Signing on, Tauri signs each unsigned .exe and
+        # .dll file of the runtime folder in place while it builds the MSI.
+        # The release copy of the signed manifest must list those files.
+        if: matrix.platform == 'windows-2025' && vars.USE_AZURE_SIGNING == 'true'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # The single quotes keep the JavaScript template strings from bash.
+          # shellcheck disable=SC2016
+          node --input-type=module --eval '
+            import { join } from "node:path";
+            import {
+              RESOURCE_DIR,
+              RUNTIME_MANIFEST_EXPORT_DIR,
+              createRuntimeFilesManifest,
+              exportRuntimeManifest,
+              loadRuntimeFilesManifest,
+              releaseManifestName,
+              stableJson,
+            } from "./scripts/headroom-runtime-lib.mjs";
+            const target = process.env.TARGET;
+            const name = releaseManifestName(target, { signed: true });
+            const before = loadRuntimeFilesManifest(join(RUNTIME_MANIFEST_EXPORT_DIR, name));
+            const manifest = createRuntimeFilesManifest(RESOURCE_DIR, {
+              target,
+              stage: "post-sign",
+              extraFields: { signing: "authenticode" },
+            });
+            // Tauri must change only .exe and .dll files.
+            const oldFiles = new Map(before.files.map((entry) => [entry.path, entry]));
+            const newFiles = new Map(manifest.files.map((entry) => [entry.path, entry]));
+            const unexpected = [...new Set([...oldFiles.keys(), ...newFiles.keys()])]
+              .filter((path) => !/\.(exe|dll)$/i.test(path))
+              .filter((path) =>
+                oldFiles.get(path)?.sha256 !== newFiles.get(path)?.sha256 ||
+                oldFiles.get(path)?.mode !== newFiles.get(path)?.mode);
+            if (unexpected.length > 0) {
+              console.log(`::warning::Tauri changed runtime files that are not .exe or .dll files: ${unexpected.slice(0, 20).join(", ")}`);
+            }
+            const path = exportRuntimeManifest({
+              manifestText: stableJson(manifest),
+              runtimeDir: RESOURCE_DIR,
+              exportDir: RUNTIME_MANIFEST_EXPORT_DIR,
+              name,
+            });
+            console.log(`Wrote ${path}: ${manifest.fileCount} files, signing authenticode.`);
+          '
+
       - name: Remove temporary Apple signing keychain
+        # Before the report and SBOM steps, so that no later tool can use the
+        # unlocked keychain.
         if: always() && startsWith(matrix.platform, 'macos')
         shell: bash
         run: |
@@ -753,17 +903,181 @@ jobs:
             }
           }
 
-  publish-updater-json:
-    name: Publish updater manifest
+      - name: Compare bundled Headroom runtimes with the release manifest
+        # Report only. The release manifests describe the runtime before Tauri
+        # bundles it. This step shows in the job summary whether a bundle
+        # changed runtime files, for example when the AppImage tool rewrites
+        # ELF run paths.
+        continue-on-error: true
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          # GitHub starts bash with -e. This report must check every bundle,
+          # also after a failed extraction.
+          set +e
+          set -uo pipefail
+          workspace="$PWD"
+          manifest="src-tauri/target/headroom-runtime-manifests/runtime-files-$TARGET.signed.sha256.json"
+          manifest_name="$(basename "$manifest")"
+          bundle_root="src-tauri/target/$TARGET/release/bundle"
+          work_root="src-tauri/target/halv-bundle-compare"
+          rm -rf "$work_root"
+          mkdir -p "$work_root"
+          differences=0
+
+          compare_runtime() {
+            local kind="$1"
+            local root="$2"
+            local build_manifest
+            build_manifest="$(find "$root" -type f -path '*/headroom-runtime/build-manifest.json' -print -quit)"
+            if [[ -z "$build_manifest" ]]; then
+              echo "::warning::$kind: no Headroom runtime was found in the bundle."
+              echo "- $TARGET $kind: no runtime found" >> "$GITHUB_STEP_SUMMARY"
+              differences=1
+              return
+            fi
+            if node scripts/verify-runtime-manifest.mjs "$(dirname "$build_manifest")" \
+                --manifest "$manifest" --details 20; then
+              echo "- $TARGET $kind: matches \`$manifest_name\`" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::warning::$kind: the bundled Headroom runtime differs from $manifest_name."
+              echo "- $TARGET $kind: differs from \`$manifest_name\`, see the job log" >> "$GITHUB_STEP_SUMMARY"
+              differences=1
+            fi
+          }
+
+          case "$TARGET" in
+            aarch64-apple-darwin|x86_64-apple-darwin)
+              compare_runtime app "$bundle_root/macos/Halv.app"
+              ;;
+            x86_64-unknown-linux-gnu)
+              deb="$(find "$bundle_root/deb" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+              mkdir -p "$work_root/deb"
+              dpkg-deb -x "$deb" "$work_root/deb"
+              compare_runtime deb "$work_root/deb"
+
+              rpm="$(find "$bundle_root/rpm" -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+              mkdir -p "$work_root/rpm"
+              (cd "$work_root/rpm" && rpm2cpio "$workspace/$rpm" | cpio -idmu --quiet)
+              compare_runtime rpm "$work_root/rpm"
+
+              appimage="$(find "$bundle_root/appimage" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+              mkdir -p "$work_root/appimage"
+              chmod +x "$appimage"
+              (cd "$work_root/appimage" && "$workspace/$appimage" --appimage-extract > /dev/null)
+              compare_runtime appimage "$work_root/appimage/squashfs-root"
+              ;;
+            x86_64-pc-windows-msvc)
+              msi="$(find "$bundle_root/msi" -maxdepth 1 -type f -name '*.msi' -print -quit)"
+              mkdir -p "$work_root/msi"
+              lessmsi x "$(cygpath -w "$workspace/$msi")" "$(cygpath -w "$workspace/$work_root/msi")\\" > /dev/null
+              compare_runtime msi "$work_root/msi"
+              ;;
+          esac
+          rm -rf "$work_root"
+          exit "$differences"
+
+      - name: Upload runtime manifests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
+            echo "Prepared release ID is not numeric."
+            exit 1
+          fi
+          release_endpoint="repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID"
+          export_dir="src-tauri/target/headroom-runtime-manifests"
+          response="src-tauri/target/halv-upload-response.json"
+          # The names contain only the matrix target, so they are safe in the
+          # jq filters below. This step uses gh --jq because jq is not on
+          # every runner.
+          for name in \
+            "runtime-files-$TARGET.sha256.json" \
+            "runtime-files-$TARGET.signed.sha256.json"; do
+            path="$export_dir/$name"
+            if [[ ! -s "$path" ]]; then
+              echo "Release file $name is missing or empty."
+              exit 1
+            fi
+            state="$(gh api "$release_endpoint" --jq '[.id, .tag_name, .draft] | @tsv')"
+            if [[ "$state" != "$RELEASE_ID"$'\t'"$TAG_NAME"$'\t'"true" ]]; then
+              echo "Prepared draft release identity changed; refusing to upload $name."
+              exit 1
+            fi
+            while read -r asset_id; do
+              [[ -z "$asset_id" ]] && continue
+              [[ "$asset_id" =~ ^[0-9]+$ ]] || exit 1
+              gh api --method DELETE "repos/$RELEASE_REPOSITORY/releases/assets/$asset_id"
+            done < <(gh api "$release_endpoint" --jq ".assets[] | select(.name == \"$name\") | .id")
+            if ! curl --fail-with-body --silent --show-error \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header "Content-Type: application/octet-stream" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --data-binary @"$path" \
+                "https://uploads.github.com/repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" \
+                > "$response"; then
+              cat "$response"
+              exit 1
+            fi
+            uploaded="$(gh api "$release_endpoint" --jq "[.assets[] | select(.name == \"$name\" and .state == \"uploaded\")] | length")"
+            if [[ "$uploaded" != "1" ]]; then
+              echo "GitHub did not confirm the $name upload."
+              exit 1
+            fi
+          done
+          rm -f "$response"
+
+      # The SBOM tool runs after this job uploaded its release files, and
+      # without the release token. The publish job attaches the SBOM.
+      - name: Generate Headroom runtime SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_SOURCE_NAME: headroom-runtime
+          SYFT_SOURCE_VERSION: ${{ steps.runtime-version.outputs.version }}
+        with:
+          path: src-tauri/resources/headroom-runtime
+          format: cyclonedx-json
+          syft-version: v1.54.0
+          # The action uses the token only for uploads, and both uploads are
+          # off. An empty token keeps it out of the environment of syft.
+          github-token: ""
+          output-file: ${{ runner.temp }}/sbom-headroom-runtime-${{ matrix.target }}.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Keep runtime SBOM for the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-headroom-runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/sbom-headroom-runtime-${{ matrix.target }}.cdx.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 30
+
+  publish-release:
+    name: Verify and publish release
     if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-22.04
     needs:
+      - app-sbom
       - build-artifacts
       - prepare-release
       - validate-release
     environment: release
     permissions:
       contents: write
+      # Build provenance attestations need an OIDC token and the
+      # attestations API.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout trusted release helper
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -782,9 +1096,10 @@ jobs:
           tag_sha="$(bash .github/scripts/resolve-release-tag.sh "$REPOSITORY" "$TAG_NAME")"
           [[ "$tag_sha" == "$RELEASE_SHA" ]]
 
-      - name: Assemble latest.json
+      - name: Read release state
+        id: state
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
           TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
         run: |
@@ -793,7 +1108,43 @@ jobs:
             echo "Prepared release ID is not numeric."
             exit 1
           fi
+          gh api "repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID" > release-state.json
+          if [[ "$(jq -r '.id' release-state.json)" != "$RELEASE_ID" \
+             || "$(jq -r '.tag_name' release-state.json)" != "$TAG_NAME" ]]; then
+            echo "Prepared release identity changed; refusing to continue."
+            exit 1
+          fi
+          if [[ "$(jq -r '.draft' release-state.json)" == "true" ]]; then
+            echo "state=draft" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A re-run after publication repeats only the latest-mark check, the
+          # legacy updater manifest, and the website refresh.
+          for name in latest.json SHA256SUMS; do
+            if ! jq -e --arg name "$name" 'any(.assets[]; .name == $name)' release-state.json > /dev/null; then
+              echo "Published release $TAG_NAME has no $name."
+              exit 1
+            fi
+          done
+          echo "Release $TAG_NAME is already published."
+          echo "state=published" >> "$GITHUB_OUTPUT"
 
+      - name: Download SBOMs
+        if: steps.state.outputs.state == 'draft'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sbom-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/halv-release-upload
+
+      - name: Assemble latest.json
+        if: steps.state.outputs.state == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
           release_endpoint="repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID"
           gh api "$release_endpoint" > release.json
           if [[ "$(jq -r '.id' release.json)" != "$RELEASE_ID" \
@@ -803,12 +1154,8 @@ jobs:
             exit 1
           fi
 
+          rm -rf updater-signatures
           mkdir -p updater-signatures
-          jq -r '.assets[].name' release.json > assets.txt
-          if ! grep -q '\.sig$' assets.txt; then
-            echo "No updater signature assets found; leaving the release as a draft."
-            exit 0
-          fi
           jq -r '.assets[] | select(.name | endswith(".sig")) | [.id, .name] | @tsv' \
             release.json > signature-assets.tsv
           while IFS=$'\t' read -r asset_id asset_name; do
@@ -822,9 +1169,10 @@ jobs:
               > "updater-signatures/$asset_name"
           done < signature-assets.tsv
           if ! compgen -G "updater-signatures/*.sig" > /dev/null; then
-            echo "No updater signature assets found; leaving the release as a draft."
-            exit 0
+            echo "No updater signature assets found; the release stays a draft."
+            exit 1
           fi
+          # The URLs in latest.json point to the assets of this release.
           node scripts/build-updater-manifest.mjs \
             --release release.json \
             --signatures updater-signatures \
@@ -832,81 +1180,371 @@ jobs:
             --tag "$TAG_NAME" \
             --output latest.json
 
-          gh api "$release_endpoint" > release-before-publish.json
-          if [[ "$(jq -r '.id' release-before-publish.json)" != "$RELEASE_ID" \
-             || "$(jq -r '.tag_name' release-before-publish.json)" != "$TAG_NAME" \
-             || "$(jq -r '.draft' release-before-publish.json)" != "true" ]]; then
-            echo "Prepared draft release identity changed before publication."
-            exit 1
-          fi
+      - name: Upload latest.json, the SBOMs and SHA256SUMS
+        if: steps.state.outputs.state == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          release_endpoint="repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID"
 
+          require_draft() {
+            gh api "$release_endpoint" > "$1"
+            if [[ "$(jq -r '.id' "$1")" != "$RELEASE_ID" \
+               || "$(jq -r '.tag_name' "$1")" != "$TAG_NAME" \
+               || "$(jq -r '.draft' "$1")" != "true" ]]; then
+              echo "Prepared draft release identity changed; refusing to publish."
+              exit 1
+            fi
+          }
+
+          # Replaces the asset with the same name, so a re-run of this job
+          # does not fail on assets from an earlier attempt.
+          replace_asset() {
+            local path="$1"
+            local name
+            name="$(basename "$path")"
+            require_draft release-before-upload.json
+            while read -r asset_id; do
+              [[ "$asset_id" =~ ^[0-9]+$ ]] || exit 1
+              gh api --method DELETE "repos/$RELEASE_REPOSITORY/releases/assets/$asset_id"
+            done < <(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .id' release-before-upload.json)
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Content-Type: application/octet-stream" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data-binary @"$path" \
+              "https://uploads.github.com/repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" \
+              > uploaded-asset.json
+            if [[ "$(jq -r '.name' uploaded-asset.json)" != "$name" \
+               || ! "$(jq -r '.id' uploaded-asset.json)" =~ ^[0-9]+$ ]]; then
+              echo "GitHub did not confirm the $name upload."
+              exit 1
+            fi
+          }
+
+          replace_asset latest.json
+          # The app SBOM job and each build job made one SBOM.
+          sbom_names=(sbom-halv-app.cdx.json)
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+            sbom_names+=("sbom-headroom-runtime-$target.cdx.json")
+          done
+          for name in "${sbom_names[@]}"; do
+            sbom="$RUNNER_TEMP/halv-release-upload/$name"
+            if ! jq -e '.bomFormat == "CycloneDX" and (.components | type == "array")' "$sbom" > /dev/null; then
+              echo "$name is missing or is not a CycloneDX SBOM."
+              exit 1
+            fi
+            replace_asset "$sbom"
+          done
+
+          # A SHA256SUMS from an earlier attempt describes old assets.
+          require_draft release-assets.json
           while read -r asset_id; do
             [[ "$asset_id" =~ ^[0-9]+$ ]] || exit 1
             gh api --method DELETE "repos/$RELEASE_REPOSITORY/releases/assets/$asset_id"
-          done < <(jq -r '.assets[] | select(.name == "latest.json") | .id' release-before-publish.json)
+          done < <(jq -r '.assets[] | select(.name == "SHA256SUMS") | .id' release-assets.json)
+          require_draft release-assets.json
 
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "Content-Type: application/octet-stream" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            --data-binary @latest.json \
-            "https://uploads.github.com/repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" \
-            > uploaded-manifest.json
-          if [[ "$(jq -r '.name' uploaded-manifest.json)" != "latest.json" \
-             || ! "$(jq -r '.id' uploaded-manifest.json)" =~ ^[0-9]+$ ]]; then
-            echo "GitHub did not confirm the uploaded updater manifest."
-            exit 1
-          fi
-
-          gh api "$release_endpoint" > release-before-finalize.json
-          uploaded_manifest_id="$(jq -r '.id' uploaded-manifest.json)"
-          if [[ "$(jq -r '.id' release-before-finalize.json)" != "$RELEASE_ID" \
-             || "$(jq -r '.tag_name' release-before-finalize.json)" != "$TAG_NAME" \
-             || "$(jq -r '.draft' release-before-finalize.json)" != "true" \
-             || "$(jq -r --argjson id "$uploaded_manifest_id" \
-                  '[.assets[] | select(.id == $id and .name == "latest.json")] | length' \
-                  release-before-finalize.json)" != "1" ]]; then
-            echo "Prepared draft release changed while publishing the updater manifest."
-            exit 1
-          fi
-          gh api --method PATCH "$release_endpoint" -F draft=false --silent
-
-      - name: Hide older public releases
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
-            echo "Published release ID is not numeric."
-            exit 1
-          fi
-
-          gh api --paginate "repos/$RELEASE_REPOSITORY/releases?per_page=100" \
-            --jq '.[] | select(.draft == false) | .id' > public-release-ids.txt
-          while read -r release_id; do
-            [[ -z "$release_id" ]] && continue
-            if [[ ! "$release_id" =~ ^[0-9]+$ ]]; then
-              echo "GitHub returned an invalid public release ID."
+          # Fail closed when one build did not upload its verification files
+          # or an installer that the website links to.
+          required=(latest.json "${sbom_names[@]}")
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+            required+=(
+              "runtime-files-$target.sha256.json"
+              "runtime-files-$target.signed.sha256.json"
+            )
+          done
+          for name in "${required[@]}"; do
+            count="$(jq --arg name "$name" '[.assets[] | select(.name == $name)] | length' release-assets.json)"
+            if [[ "$count" != "1" ]]; then
+              echo "The draft release must have exactly one $name; it has $count."
               exit 1
             fi
-            if [[ "$release_id" == "$RELEASE_ID" ]]; then
-              continue
+          done
+          for pattern in '_aarch64\.dmg$' '_x64\.dmg$'; do
+            count="$(jq --arg pattern "$pattern" '[.assets[] | select(.name | test($pattern))] | length' release-assets.json)"
+            if [[ "$count" != "1" ]]; then
+              echo "The draft release must have exactly one installer that matches $pattern; it has $count."
+              exit 1
             fi
-            gh api --method PATCH \
-              "repos/$RELEASE_REPOSITORY/releases/$release_id" \
-              -F draft=true --silent
-          done < public-release-ids.txt
+          done
 
-          remaining_public_ids="$(
-            gh api --paginate "repos/$RELEASE_REPOSITORY/releases?per_page=100" \
-              --jq '.[] | select(.draft == false) | .id'
-          )"
-          if [[ "$remaining_public_ids" != "$RELEASE_ID" ]]; then
-            echo "Exactly the newly published release must remain public."
+          # SHA256SUMS lists every other asset, from the bytes that GitHub
+          # serves after all uploads.
+          rm -rf release-assets
+          mkdir release-assets
+          jq -r '.assets[] | [.id, .name, (.digest // "")] | @tsv' release-assets.json > asset-list.tsv
+          while IFS=$'\t' read -r asset_id asset_name asset_digest; do
+            if [[ ! "$asset_id" =~ ^[0-9]+$ \
+               || ! "$asset_name" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+              echo "Invalid release asset metadata."
+              exit 1
+            fi
+            gh api -H "Accept: application/octet-stream" \
+              "repos/$RELEASE_REPOSITORY/releases/assets/$asset_id" \
+              > "release-assets/$asset_name"
+            if [[ -n "$asset_digest" ]]; then
+              actual_digest="sha256:$(sha256sum "release-assets/$asset_name" | cut -d ' ' -f 1)"
+              if [[ "$actual_digest" != "$asset_digest" ]]; then
+                echo "Downloaded $asset_name does not match the digest that GitHub reports."
+                exit 1
+              fi
+            fi
+          done < asset-list.tsv
+          mapfile -t asset_names < <(cut -f 2 asset-list.tsv | LC_ALL=C sort)
+          (cd release-assets && sha256sum -- "${asset_names[@]}") > SHA256SUMS
+          cp SHA256SUMS release-assets/SHA256SUMS
+          (cd release-assets && sha256sum --check --strict --quiet ../SHA256SUMS)
+          replace_asset SHA256SUMS
+          sums_id="$(jq -r '.id' uploaded-asset.json)"
+
+          # The publish step refuses to publish when this asset set changes.
+          {
+            cut -f 1,2 asset-list.tsv
+            printf '%s\t%s\n' "$sums_id" SHA256SUMS
+          } | LC_ALL=C sort > expected-assets.tsv
+          {
+            echo "### Release assets of $TAG_NAME"
+            echo
+            echo '```text'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest build provenance
+        if: steps.state.outputs.state == 'draft'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.dmg
+            release-assets/*.app.tar.gz
+            release-assets/*.AppImage
+            release-assets/*.deb
+            release-assets/*.rpm
+            release-assets/*.msi
+            release-assets/runtime-files-*.json
+            release-assets/*.cdx.json
+            release-assets/SHA256SUMS
+
+      - name: Publish release
+        if: steps.state.outputs.state == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          release_endpoint="repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID"
+          gh api "$release_endpoint" > release-before-finalize.json
+          if [[ "$(jq -r '.id' release-before-finalize.json)" != "$RELEASE_ID" \
+             || "$(jq -r '.tag_name' release-before-finalize.json)" != "$TAG_NAME" \
+             || "$(jq -r '.draft' release-before-finalize.json)" != "true" ]]; then
+            echo "Prepared draft release changed while publishing the release files."
             exit 1
+          fi
+          jq -r '.assets[] | [.id, .name] | @tsv' release-before-finalize.json \
+            | LC_ALL=C sort > assets-before-finalize.tsv
+          if ! cmp -s expected-assets.tsv assets-before-finalize.tsv; then
+            echo "Release assets changed after SHA256SUMS was written; refusing to publish."
+            diff expected-assets.tsv assets-before-finalize.tsv || true
+            exit 1
+          fi
+          # Older releases stay public. GitHub marks a newly published release
+          # as the latest one. The next step checks it.
+          gh api --method PATCH "$release_endpoint" -F draft=false --silent
+
+      - name: Make sure that this release is the latest one
+        # Also runs on a re-run after publication, so that a re-run repairs
+        # the latest mark. Updaters read /releases/latest.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG_NAME#v}"
+          for attempt in 1 2 3 4 5; do
+            latest_id=""
+            latest_tag=""
+            # The first release of a repository can return 404 for a moment.
+            if gh api "repos/$RELEASE_REPOSITORY/releases/latest" > latest-release.json 2> /dev/null; then
+              latest_id="$(jq -r '.id' latest-release.json)"
+              latest_tag="$(jq -r '.tag_name' latest-release.json)"
+            fi
+            if [[ "$latest_id" == "$RELEASE_ID" ]]; then
+              echo "$TAG_NAME is the latest release of $RELEASE_REPOSITORY."
+              exit 0
+            fi
+            # A re-run of an older release must not take the mark from a newer one.
+            if [[ "$latest_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+               && "$(printf '%s\n' "${latest_tag#v}" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+              echo "::warning::The newer release $latest_tag is the latest release; $TAG_NAME stays as it is."
+              exit 0
+            fi
+            if [[ "$attempt" == "5" ]]; then
+              echo "GitHub does not mark $TAG_NAME as the latest release; the updater would not find it."
+              exit 1
+            fi
+            if [[ "$attempt" -ge 2 ]]; then
+              gh api --method PATCH "repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID" -f make_latest=true --silent
+            fi
+            sleep 5
+          done
+
+      - name: Read published latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$RELEASE_REPOSITORY/releases/$RELEASE_ID" > published-release.json
+          if [[ "$(jq -r '.id' published-release.json)" != "$RELEASE_ID" \
+             || "$(jq -r '.tag_name' published-release.json)" != "$TAG_NAME" \
+             || "$(jq -r '.draft' published-release.json)" != "false" ]]; then
+            echo "Release $TAG_NAME is not published."
+            exit 1
+          fi
+          mapfile -t manifest_ids < <(jq -r '.assets[] | select(.name == "latest.json") | .id' published-release.json)
+          if [[ "${#manifest_ids[@]}" -ne 1 || ! "${manifest_ids[0]}" =~ ^[0-9]+$ ]]; then
+            echo "Published release must have exactly one latest.json."
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" \
+            "repos/$RELEASE_REPOSITORY/releases/assets/${manifest_ids[0]}" \
+            > legacy-latest.json
+
+          # Halv 1.0.0 and older read this file from the legacy repository.
+          # Each URL must name an asset of this published release.
+          prefix="https://github.com/$RELEASE_REPOSITORY/releases/download/$TAG_NAME/"
+          if ! jq -e --arg version "${TAG_NAME#v}" --arg prefix "$prefix" '
+              .version == $version
+              and (.platforms | type == "object" and length > 0)
+              and all(.platforms[];
+                (.url | type == "string" and startswith($prefix))
+                and (.signature | type == "string" and length > 0))
+            ' legacy-latest.json > /dev/null; then
+            echo "Published latest.json does not describe $TAG_NAME in $RELEASE_REPOSITORY."
+            exit 1
+          fi
+          jq -r --arg prefix "$prefix" '.platforms[].url | ltrimstr($prefix)' legacy-latest.json \
+            | LC_ALL=C sort -u > manifest-assets.txt
+          jq -r '.assets[].name | @uri' published-release.json | LC_ALL=C sort -u > published-assets.txt
+          missing_assets="$(LC_ALL=C comm -23 manifest-assets.txt published-assets.txt)"
+          if [[ -n "$missing_assets" ]]; then
+            echo "latest.json names assets that the published release does not have: $missing_assets"
+            exit 1
+          fi
+
+      - name: Publish latest.json for Halv 1.0.0 and older
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+          TAG_NAME: ${{ needs.validate-release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "RELEASE_REPO_TOKEN is required to update $LEGACY_RELEASE_REPOSITORY."
+            exit 1
+          fi
+          legacy_notes="Halv $TAG_NAME is at https://github.com/$RELEASE_REPOSITORY/releases/tag/$TAG_NAME. This release holds only latest.json, so that Halv 1.0.0 and older find the update."
+          if legacy_json="$(gh release view "$TAG_NAME" --repo "$LEGACY_RELEASE_REPOSITORY" --json databaseId 2>/dev/null)"; then
+            echo "Reusing release $TAG_NAME in $LEGACY_RELEASE_REPOSITORY."
+          else
+            gh release create "$TAG_NAME" --repo "$LEGACY_RELEASE_REPOSITORY" --target main --draft \
+              --title "Halv $TAG_NAME" \
+              --notes "$legacy_notes"
+            legacy_json="$(gh release view "$TAG_NAME" --repo "$LEGACY_RELEASE_REPOSITORY" --json databaseId)"
+          fi
+          legacy_id="$(jq -r '.databaseId' <<<"$legacy_json")"
+          if [[ ! "$legacy_id" =~ ^[0-9]+$ ]]; then
+            echo "GitHub did not return a numeric legacy release ID."
+            exit 1
+          fi
+          legacy_endpoint="repos/$LEGACY_RELEASE_REPOSITORY/releases/$legacy_id"
+          gh api "$legacy_endpoint" > legacy-release.json
+          if [[ "$(jq -r '.tag_name' legacy-release.json)" != "$TAG_NAME" ]]; then
+            echo "Legacy release identity changed; refusing to update it."
+            exit 1
+          fi
+
+          # Replace latest.json only when it changed. The new file goes up under
+          # a temporary name first. Then the published file is missing only
+          # between one delete call and one rename call.
+          new_digest="sha256:$(sha256sum legacy-latest.json | cut -d ' ' -f 1)"
+          mapfile -t old_ids < <(jq -r '.assets[] | select(.name == "latest.json") | .id' legacy-release.json)
+          old_digest="$(jq -r '[.assets[] | select(.name == "latest.json")][0].digest // ""' legacy-release.json)"
+          if [[ "${#old_ids[@]}" -eq 1 && "$old_digest" == "$new_digest" ]]; then
+            echo "latest.json of $TAG_NAME in $LEGACY_RELEASE_REPOSITORY is already current."
+          else
+            staged_name="latest.json.next"
+            while read -r asset_id; do
+              [[ "$asset_id" =~ ^[0-9]+$ ]] || exit 1
+              gh api --method DELETE "repos/$LEGACY_RELEASE_REPOSITORY/releases/assets/$asset_id"
+            done < <(jq -r --arg name "$staged_name" '.assets[] | select(.name == $name) | .id' legacy-release.json)
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Content-Type: application/octet-stream" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data-binary @legacy-latest.json \
+              "https://uploads.github.com/repos/$LEGACY_RELEASE_REPOSITORY/releases/$legacy_id/assets?name=$staged_name" \
+              > legacy-uploaded-manifest.json
+            staged_id="$(jq -r '.id' legacy-uploaded-manifest.json)"
+            if [[ "$(jq -r '.name' legacy-uploaded-manifest.json)" != "$staged_name" \
+               || ! "$staged_id" =~ ^[0-9]+$ ]]; then
+              echo "GitHub did not confirm the legacy updater manifest upload."
+              exit 1
+            fi
+            for asset_id in "${old_ids[@]}"; do
+              [[ "$asset_id" =~ ^[0-9]+$ ]] || exit 1
+              gh api --method DELETE "repos/$LEGACY_RELEASE_REPOSITORY/releases/assets/$asset_id"
+            done
+            gh api --method PATCH "repos/$LEGACY_RELEASE_REPOSITORY/releases/assets/$staged_id" \
+              -f name=latest.json > legacy-renamed-manifest.json
+            if [[ "$(jq -r '.name' legacy-renamed-manifest.json)" != "latest.json" ]]; then
+              echo "GitHub did not rename the legacy updater manifest to latest.json."
+              exit 1
+            fi
+          fi
+          gh api "$legacy_endpoint" > legacy-release.json
+          if ! jq -e --arg digest "$new_digest" '
+              [.assets[] | select(.name == "latest.json")]
+              | length == 1 and (.[0].digest == null or .[0].digest == $digest)
+            ' legacy-release.json > /dev/null; then
+            echo "The legacy release must have exactly one latest.json with the new content."
+            exit 1
+          fi
+
+          # Older legacy releases stay public. This release becomes the latest
+          # one, so that /releases/latest/download/latest.json serves it. A
+          # re-run of an older release must not take the mark from a newer one.
+          make_latest=true
+          if gh api "repos/$LEGACY_RELEASE_REPOSITORY/releases/latest" > legacy-latest-release.json 2> /dev/null; then
+            current_tag="$(jq -r '.tag_name' legacy-latest-release.json)"
+            if [[ "$current_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+               && "$(printf '%s\n' "${current_tag#v}" "${TAG_NAME#v}" | sort -V | tail -n 1)" != "${TAG_NAME#v}" ]]; then
+              echo "::warning::The newer release $current_tag is the latest release of $LEGACY_RELEASE_REPOSITORY; $TAG_NAME stays as it is."
+              make_latest=false
+            fi
+          fi
+          gh api --method PATCH "$legacy_endpoint" \
+            -F draft=false -f make_latest="$make_latest" -f body="$legacy_notes" --silent
+          if [[ "$make_latest" == "true" ]]; then
+            for attempt in 1 2 3; do
+              latest_tag="$(gh api "repos/$LEGACY_RELEASE_REPOSITORY/releases/latest" --jq '.tag_name' || true)"
+              [[ "$latest_tag" == "$TAG_NAME" ]] && break
+              if [[ "$attempt" == "3" ]]; then
+                echo "GitHub does not mark $TAG_NAME as the latest release of $LEGACY_RELEASE_REPOSITORY."
+                exit 1
+              fi
+              sleep 5
+            done
           fi
 
       - name: Refresh website release metadata

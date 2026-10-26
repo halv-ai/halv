@@ -66,7 +66,7 @@ Halv never sends prompts, code, file names, terminal output, account emails or A
 - The task board does not list a route that ran in the parent without Halv Cloud. The board shows the inline Halv Cloud card once instead.
 - The `halv-savings` MCP server answers `sign_in_required` when Halv has no valid session (signed out, HTTP 401, or an unreadable token). It answers `halv_cloud_required` only for HTTP 402 and 403. Both answers carry `action: execute_in_parent`.
 - A legacy `beta_free` account keeps Halv Cloud in the app. The server rule for Halv Cloud routes must also allow `beta_free`.
-- The Headroom proxy never pauses for the plan of the account. Halv starts it with `HEADROOM_BEACON=off`, `DO_NOT_TRACK=1` and `HEADROOM_UPDATE_CHECK=off`, so the proxy sends no telemetry.
+- The Headroom proxy never pauses for the plan of the account. Halv starts it with `HEADROOM_BEACON=off`, `DO_NOT_TRACK=1` and `HEADROOM_UPDATE_CHECK=off`, so the proxy sends no telemetry. On macOS only, Halv also sets `MallocAggressiveMadvise=1` and `MallocLargeCache=0` at spawn, because a frozen runtime cannot set them with a re-exec.
 - An "off" answer holds for the running session also when the preferences write fails.
 - `analyticsEventsWithConsent` in `src/analytics.ts` records `first_open` with the first app state after the answer becomes `on`. The native queue drops each event while the answer is not `on`, so a late yes still sends `first_open` once.
 - App no longer calls the send gate of ADR 0018. A local send never waits for an account. The routing and rotation switches take over the paywall moment.

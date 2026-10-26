@@ -337,6 +337,7 @@ pub fn run() {
             preferences::preferences_set_task_routing,
             preferences::preferences_set_worker_lane,
             preferences::preferences_set_workflow_routing,
+            preferences::preferences_set_brief_sharing,
             preferences::preferences_set_claude_ultracode,
             preferences::preferences_set_show_dot_shortcut,
             preferences::preferences_set_routing_tier_agents,

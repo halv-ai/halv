@@ -42,11 +42,18 @@ const HALV_CLOUD_REQUIRED_MESSAGE: &str =
 const SIGN_IN_REQUIRED: &str = "sign_in_required";
 const SIGN_IN_REQUIRED_MESSAGE: &str =
     "Sign in to your Halv account to route tasks. The coordinator does this task itself.";
+/// The reason and the provider of a route when the user did not allow task
+/// briefs to leave the device (ADR 0023). Halv sent nothing.
+const BRIEF_SHARING_OFF: &str = "brief_sharing_off";
+const BRIEF_SHARING_OFF_MESSAGE: &str =
+    "Task brief sharing is off in Halv settings, so Halv sent nothing. The coordinator does this task itself.";
 const EXECUTE_IN_PARENT: &str = "execute_in_parent";
 const STORAGE_NOT_READY_MESSAGE: &str = "Halv task routing storage is not ready. Restart Halv.";
 const MAX_TASK_TITLE_CHARS: usize = 120;
 const WORKFLOW_ROUTING_OFF_MESSAGE: &str =
     "Workflow routing is off in Halv settings. Run the workflow without routed options.";
+const TASK_ROUTING_OFF_MESSAGE: &str =
+    "Task routing is off for this session. Do the task yourself.";
 const MAX_WORKFLOW_TASKS: usize = 64;
 const MAX_WORKFLOW_BRIEF_CHARS: usize = 4_000;
 const MAX_WORKFLOW_BATCH_BRIEF_CHARS: usize = 64_000;
@@ -66,9 +73,12 @@ enum DecisionError {
     /// Halv has no valid session: the user is signed out, the token is
     /// unreadable, or the server refused the session with HTTP 401.
     SignInRequired,
-    /// The server refused the account with HTTP 402 or 403. Task routing is
-    /// part of Halv Cloud (ADR 0021).
+    /// The server refused the account with HTTP 402 or 403, or the cached
+    /// entitlements show no Halv Cloud access. Task routing is part of Halv
+    /// Cloud (ADR 0021).
     CloudRequired,
+    /// The user did not allow task briefs to leave the device (ADR 0023).
+    BriefSharingOff,
     Failed(String),
 }
 
@@ -77,17 +87,57 @@ impl DecisionError {
         match self {
             Self::SignInRequired => SIGN_IN_REQUIRED_MESSAGE.to_string(),
             Self::CloudRequired => HALV_CLOUD_REQUIRED_MESSAGE.to_string(),
+            Self::BriefSharingOff => BRIEF_SHARING_OFF_MESSAGE.to_string(),
             Self::Failed(message) => message.clone(),
         }
     }
 
     /// The route reason when the coordinator does the task itself.
-    fn parent_reason(&self) -> Option<RoutingReason> {
+    fn parent_reason(&self) -> Option<&'static str> {
         match self {
-            Self::SignInRequired => Some(RoutingReason::SignInRequired),
-            Self::CloudRequired => Some(RoutingReason::CloudRequired),
+            Self::SignInRequired => Some(RoutingReason::SignInRequired.as_str()),
+            Self::CloudRequired => Some(RoutingReason::CloudRequired.as_str()),
+            Self::BriefSharingOff => Some(BRIEF_SHARING_OFF),
             Self::Failed(_) => None,
         }
+    }
+}
+
+/// Halv Cloud access from the cached `/v1/me` entitlements. It follows
+/// `cloudAccess` in `src/halvCloud.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachedCloudAccess {
+    Granted,
+    Denied,
+    /// The app has no entitlements yet. The server decides.
+    Unknown,
+}
+
+fn cached_cloud_access(entitlements_json: Option<&str>, plan: Option<&str>) -> CachedCloudAccess {
+    let Some(entitlements) = entitlements_json
+        .and_then(|value| serde_json::from_str::<crate::auth::Entitlements>(value).ok())
+    else {
+        return CachedCloudAccess::Unknown;
+    };
+    let payment_issue = entitlements
+        .payment_issue
+        .as_deref()
+        .filter(|issue| !issue.trim().is_empty());
+    // An unpaid subscription has no access, also when the server is late.
+    if payment_issue == Some("unpaid") {
+        return CachedCloudAccess::Denied;
+    }
+    if entitlements.can_use_app {
+        return CachedCloudAccess::Granted;
+    }
+    // Legacy beta accounts keep Halv Cloud while billing is required.
+    let plan = Some(entitlements.plan.as_str())
+        .filter(|plan| !plan.is_empty())
+        .or(plan);
+    if plan == Some("beta_free") && payment_issue.is_none() {
+        CachedCloudAccess::Granted
+    } else {
+        CachedCloudAccess::Denied
     }
 }
 
@@ -133,6 +183,9 @@ struct SavingsMcpArgs {
     conversation_id: Option<String>,
     worker_lane: WorkerLane,
     tier_agents: TierAgentAssignments,
+    /// The routing tools are on (ADR 0023). Without them, the server lists
+    /// only the savings tools, which send nothing.
+    task_routing: bool,
     /// `route_tasks` routes Claude Code Workflow agents (ADR 0014).
     workflow_routing: bool,
 }
@@ -196,6 +249,9 @@ fn routing_totals_or_none(
     crate::storage::routing_savings::routing_totals(connection, scope).unwrap_or_default()
 }
 
+/// `task_routing` is the effective value of the launch (ADR 0023). Without
+/// it, the server lists only the savings tools, which send nothing.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_config(
     database_path: &Path,
     session_id: &str,
@@ -203,6 +259,7 @@ pub(crate) fn launch_config(
     conversation_id: Option<&str>,
     worker_lane: WorkerLanePreference,
     tier_agents: TierAgentAssignments,
+    task_routing: bool,
     workflow_routing: bool,
 ) -> Result<SavingsMcpLaunchConfig, String> {
     let executable = std::env::current_exe()
@@ -218,6 +275,7 @@ pub(crate) fn launch_config(
         conversation_id,
         worker_lane,
         tier_agents,
+        task_routing,
         workflow_routing,
     )?;
     config.env = keychain_environment(KEYCHAIN_ENVIRONMENT, |name| std::env::var(name).ok());
@@ -234,6 +292,7 @@ fn launch_config_with_executable(
     conversation_id: Option<&str>,
     worker_lane: WorkerLanePreference,
     tier_agents: TierAgentAssignments,
+    task_routing: bool,
     workflow_routing: bool,
 ) -> Result<SavingsMcpLaunchConfig, String> {
     let path_text = |path: &Path, label: &str| {
@@ -277,8 +336,13 @@ fn launch_config_with_executable(
             .map_err(|error| format!("failed to encode routing tier agents: {error}"))?,
     );
     // Only "off" goes on the command line, so the default argument set
-    // stays the same as in older apps.
-    if !workflow_routing {
+    // stays the same as in older apps. Workflow routing sends briefs too,
+    // so it is off without task routing (ADR 0023).
+    if !task_routing {
+        args.push("--task-routing".to_string());
+        args.push("off".to_string());
+    }
+    if !(workflow_routing && task_routing) {
         args.push("--workflow-routing".to_string());
         args.push("off".to_string());
     }
@@ -321,6 +385,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<SavingsMcpArgs
     let mut conversation_id = None;
     let mut worker_lane = None;
     let mut tier_agents = None;
+    let mut task_routing = None;
     let mut workflow_routing = None;
     let mut args = args.into_iter();
     while let Some(flag) = args.next() {
@@ -332,6 +397,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<SavingsMcpArgs
             Some("--conversation") => &mut conversation_id,
             Some("--worker-lane") => &mut worker_lane,
             Some("--tier-agents") => &mut tier_agents,
+            Some("--task-routing") => &mut task_routing,
             Some("--workflow-routing") => &mut workflow_routing,
             _ => return Err("an unsupported argument was provided".to_string()),
         };
@@ -371,9 +437,14 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<SavingsMcpArgs
         .transpose()?
         .unwrap_or_default();
     tier_agents.validate_default_catalog()?;
-    // Older apps do not send the flag. Workflow routing is on for them.
-    let workflow_routing = match optional_text(workflow_routing).as_deref() {
+    // Older apps do not send the flags. Routing is on for them.
+    let task_routing = match optional_text(task_routing).as_deref() {
         None | Some("on") => true,
+        Some("off") => false,
+        Some(_) => return Err("the task routing flag must be on or off".to_string()),
+    };
+    let workflow_routing = match optional_text(workflow_routing).as_deref() {
+        None | Some("on") => task_routing,
         Some("off") => false,
         Some(_) => return Err("the workflow routing flag must be on or off".to_string()),
     };
@@ -385,6 +456,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<SavingsMcpArgs
         conversation_id: optional_text(conversation_id),
         worker_lane,
         tier_agents,
+        task_routing,
         workflow_routing,
     })
 }
@@ -398,12 +470,17 @@ struct SavingsReader {
     conversation_id: Option<String>,
     worker_lane: WorkerLane,
     tier_agents: TierAgentAssignments,
+    task_routing: bool,
     workflow_routing: bool,
     /// The Claude Code projects folder that holds the transcripts.
     claude_projects_root: Option<PathBuf>,
     runtime: OnceLock<Option<tokio::runtime::Runtime>>,
     /// The keychain item of the Halv session token (issue #50).
     session_token: SessionTokenVault,
+    /// The app preferences file. The server reads the task brief answer
+    /// from it before each brief, so a "no" in Settings stops a running
+    /// session at once (ADR 0023).
+    preferences_path: PathBuf,
 }
 
 impl SavingsReader {
@@ -418,7 +495,12 @@ impl SavingsReader {
         connection
             .busy_timeout(std::time::Duration::from_secs(2))
             .map_err(|_| ())?;
+        // The database and the preferences file share the app data folder.
+        let preferences_path = crate::preferences::preferences_path(
+            args.database_path.parent().unwrap_or_else(|| Path::new("")),
+        );
         Ok(Self {
+            preferences_path,
             connection,
             session_id: args.session_id,
             rtk_database_path: args.rtk_database_path,
@@ -427,6 +509,7 @@ impl SavingsReader {
             conversation_id: args.conversation_id,
             worker_lane: args.worker_lane,
             tier_agents: args.tier_agents,
+            task_routing: args.task_routing,
             workflow_routing: args.workflow_routing,
             claude_projects_root: workflow_receipts::claude_projects_root(),
             runtime: OnceLock::new(),
@@ -644,11 +727,55 @@ impl SavingsReader {
         })
     }
 
-    /// Without a valid session the user must sign in first.
-    fn fetch_decision(&self, brief: &str) -> Result<crate::auth::RouteDecision, DecisionError> {
-        let (server_url, token) = self
+    /// The task brief answer in the preferences file. A missing or damaged
+    /// file reads `Unset`.
+    fn brief_sharing(&self) -> crate::preferences::BriefSharing {
+        crate::preferences::brief_sharing_in_file(&self.preferences_path)
+    }
+
+    /// Halv Cloud access from the entitlements that the app cached.
+    fn cached_cloud_access(&self) -> CachedCloudAccess {
+        self.connection
+            .query_row(
+                "SELECT entitlements_json, plan FROM auth_session WHERE id = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .map(|(entitlements, plan)| {
+                cached_cloud_access(entitlements.as_deref(), plan.as_deref())
+            })
+            .unwrap_or(CachedCloudAccess::Unknown)
+    }
+
+    /// The server URL and the token for a brief, or the reason that no
+    /// brief may leave the device. It reads only local data, so a refusal
+    /// sends nothing (ADR 0023):
+    /// - no valid session: the user must sign in first;
+    /// - cached entitlements without Halv Cloud: the server would refuse;
+    /// - no "yes" to the task brief question: the user did not allow it.
+    ///
+    /// Unknown entitlements do not refuse. The server decides for them.
+    fn brief_session(&self) -> Result<(String, String), DecisionError> {
+        let session = self
             .halv_session()
             .map_err(|_| DecisionError::SignInRequired)?;
+        if self.cached_cloud_access() == CachedCloudAccess::Denied {
+            return Err(DecisionError::CloudRequired);
+        }
+        if self.brief_sharing() != crate::preferences::BriefSharing::Allowed {
+            return Err(DecisionError::BriefSharingOff);
+        }
+        Ok(session)
+    }
+
+    /// Without a valid session the user must sign in first.
+    fn fetch_decision(&self, brief: &str) -> Result<crate::auth::RouteDecision, DecisionError> {
+        let (server_url, token) = self.brief_session()?;
         let runtime = self.runtime().map_err(DecisionError::Failed)?;
         runtime.block_on(request_decision(&server_url, &token, brief))
     }
@@ -659,14 +786,11 @@ impl SavingsReader {
         &self,
         briefs: &[&str],
     ) -> Vec<Result<crate::auth::RouteDecision, DecisionError>> {
-        let session = self
-            .halv_session()
-            .map_err(|_| DecisionError::SignInRequired)
-            .and_then(|session| {
-                self.runtime()
-                    .map(|runtime| (session, runtime))
-                    .map_err(DecisionError::Failed)
-            });
+        let session = self.brief_session().and_then(|session| {
+            self.runtime()
+                .map(|runtime| (session, runtime))
+                .map_err(DecisionError::Failed)
+        });
         let ((server_url, token), runtime) = match session {
             Ok(session) => session,
             Err(error) => return briefs.iter().map(|_| Err(error.clone())).collect(),
@@ -777,9 +901,7 @@ impl SavingsReader {
             Ok(decision) => decision,
             Err(DecisionError::Failed(message)) => return Err(message),
             Err(error) => {
-                let reason = error
-                    .parent_reason()
-                    .unwrap_or(RoutingReason::CloudRequired);
+                let reason = error.parent_reason().unwrap_or(HALV_CLOUD_REQUIRED);
                 return Ok(self.cloud_required_route(brief, title, worker_lane, reason));
             }
         };
@@ -802,15 +924,17 @@ impl SavingsReader {
         Ok((route, decision))
     }
 
-    /// The route without Halv Cloud access or without a valid session: the
+    /// The route without Halv Cloud access, without a valid session, or
+    /// without a "yes" to the task brief question (ADR 0023): the
     /// coordinator does the task itself at its own tier. The answer is a
     /// normal route, never an error, so the agent keeps working (ADR 0021).
+    /// The route stays on this device.
     fn cloud_required_route(
         &self,
         brief: &str,
         title: Option<&str>,
         worker_lane: WorkerLane,
-        reason: RoutingReason,
+        reason: &'static str,
     ) -> (TaskRoute, crate::auth::RouteDecision) {
         let decision = parent_route_decision(reason);
         let (coordinator_lane, _) = self.coordinator();
@@ -820,9 +944,15 @@ impl SavingsReader {
             lane: worker_lane.fixed().unwrap_or(coordinator_lane),
             model: None,
             effort: None,
-            reasons: vec![reason],
+            reasons: Vec::new(),
         };
         let route = self.new_task_route(&decision, &result, brief, title, None, worker_lane);
+        // The reason names the refusal. `brief_sharing_off` is no routing
+        // rule, so it is not a `RoutingReason`.
+        let route = TaskRoute {
+            reasons: vec![reason.to_string()],
+            ..route
+        };
         (route, decision)
     }
 
@@ -1128,7 +1258,7 @@ impl SavingsReader {
         let batch_id = crate::storage::new_uuid_v4();
         let mut planned = Vec::new();
         let mut fallback = Map::new();
-        let mut parent_reason: Option<RoutingReason> = None;
+        let mut parent_reason: Option<&'static str> = None;
         for (task, decision) in request.tasks.iter().zip(decisions) {
             let (decision, fell_back) = match decision {
                 Ok(decision) => (decision, false),
@@ -1184,7 +1314,7 @@ impl SavingsReader {
             .map_err(|_| STORAGE_NOT_READY_MESSAGE.to_string())?;
         let mut result = route_tasks_result(&batch_id, &default, &planned, &fallback);
         if let Some(reason) = parent_reason {
-            result["structuredContent"]["reason"] = Value::String(reason.as_str().to_string());
+            result["structuredContent"]["reason"] = Value::String(reason.to_string());
         }
         Ok(result)
     }
@@ -1521,11 +1651,12 @@ fn require_workflow_columns(connection: &Connection) -> Result<(), String> {
 }
 
 /// The stored decision of a route that the coordinator does itself: no Halv
-/// Cloud access (`halv_cloud_required`) or no valid session
-/// (`sign_in_required`).
-fn parent_route_decision(reason: RoutingReason) -> crate::auth::RouteDecision {
+/// Cloud access (`halv_cloud_required`), no valid session
+/// (`sign_in_required`), or no "yes" to the task brief question
+/// (`brief_sharing_off`).
+fn parent_route_decision(reason: &str) -> crate::auth::RouteDecision {
     crate::auth::RouteDecision {
-        provider: reason.as_str().to_string(),
+        provider: reason.to_string(),
         ..fallback_decision()
     }
 }
@@ -2014,8 +2145,8 @@ struct RouteToolPayload<'a> {
     /// Only on a route without Halv Cloud access: `execute_in_parent`.
     #[serde(skip_serializing_if = "Option::is_none")]
     action: Option<&'a str>,
-    /// Only on a route that runs in the parent: `halv_cloud_required` or
-    /// `sign_in_required`.
+    /// Only on a route that runs in the parent: `halv_cloud_required`,
+    /// `sign_in_required`, or `brief_sharing_off`.
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'a str>,
 }
@@ -2026,18 +2157,20 @@ fn route_tool_result(
     decision: &crate::auth::RouteDecision,
     escalated_from: Option<&str>,
 ) -> Value {
-    // A route without Halv Cloud access or without a valid session runs in
-    // the parent. The reason tells the agent which one.
-    let parent_reason = route
-        .reasons
-        .iter()
-        .map(String::as_str)
-        .find(|reason| *reason == HALV_CLOUD_REQUIRED || *reason == SIGN_IN_REQUIRED);
+    // A route without Halv Cloud access, without a valid session, or
+    // without a "yes" to the task brief question runs in the parent. The
+    // reason tells the agent which one.
+    let parent_reason = route.reasons.iter().map(String::as_str).find(|reason| {
+        matches!(
+            *reason,
+            HALV_CLOUD_REQUIRED | SIGN_IN_REQUIRED | BRIEF_SHARING_OFF
+        )
+    });
     let cloud_required = parent_reason.is_some();
-    let parent_message = if parent_reason == Some(SIGN_IN_REQUIRED) {
-        SIGN_IN_REQUIRED_MESSAGE
-    } else {
-        HALV_CLOUD_REQUIRED_MESSAGE
+    let parent_message = match parent_reason {
+        Some(SIGN_IN_REQUIRED) => SIGN_IN_REQUIRED_MESSAGE,
+        Some(BRIEF_SHARING_OFF) => BRIEF_SHARING_OFF_MESSAGE,
+        _ => HALV_CLOUD_REQUIRED_MESSAGE,
     };
     let payload = RouteToolPayload {
         task_id: &route.id,
@@ -2140,9 +2273,14 @@ fn serve(input: impl BufRead, mut output: impl Write, reader: &SavingsReader) ->
             continue;
         };
         let response = match method {
-            "initialize" => rpc_result(id, initialize_result(&request, reader.workflow_routing)),
+            "initialize" => rpc_result(
+                id,
+                initialize_result(&request, reader.task_routing, reader.workflow_routing),
+            ),
             "ping" | "shutdown" => rpc_result(id, json!({})),
-            "tools/list" => rpc_result(id, tools_list(reader.workflow_routing)),
+            "tools/list" => {
+                rpc_result(id, tools_list(reader.task_routing, reader.workflow_routing))
+            }
             "tools/call" => tool_call_response(id, &request, reader),
             "resources/list" => rpc_result(id, resources_list()),
             "resources/templates/list" => rpc_result(id, json!({ "resourceTemplates": [] })),
@@ -2156,7 +2294,10 @@ fn serve(input: impl BufRead, mut output: impl Write, reader: &SavingsReader) ->
 
 /// The server instructions reach the coordinator and every subagent, so they
 /// stay short. The tool descriptions carry the details on demand.
-fn server_instructions(workflow_routing: bool) -> String {
+fn server_instructions(task_routing: bool, workflow_routing: bool) -> String {
+    if !task_routing {
+        return "Halv savings. Read the token and dollar savings of this session. Task routing is off for this session.".to_string();
+    }
     let mut text = String::from(
         "Halv JEV routing. Only the root coordinator routes. A worker or workflow agent calls a routing or report tool only when its prompt says so. Codex coordinators use investigate-l1-l2-v1: route investigation before repository discovery, report evidence, then route l1. Only L1 routes l2, and L2 cannot delegate.",
     );
@@ -2168,7 +2309,7 @@ fn server_instructions(workflow_routing: bool) -> String {
     text
 }
 
-fn initialize_result(request: &Value, workflow_routing: bool) -> Value {
+fn initialize_result(request: &Value, task_routing: bool, workflow_routing: bool) -> Value {
     let protocol_version = request
         .pointer("/params/protocolVersion")
         .and_then(Value::as_str)
@@ -2183,7 +2324,7 @@ fn initialize_result(request: &Value, workflow_routing: bool) -> Value {
             "name": "halv-savings",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": server_instructions(workflow_routing),
+        "instructions": server_instructions(task_routing, workflow_routing),
     })
 }
 
@@ -2307,9 +2448,18 @@ fn workflow_tools() -> Vec<Value> {
     ]
 }
 
-fn tools_list(workflow_routing: bool) -> Value {
+fn tools_list(task_routing: bool, workflow_routing: bool) -> Value {
     let mut tools = legacy_tools();
-    if workflow_routing {
+    // Without task routing, only the savings tools stay. They read local
+    // data and send nothing (ADR 0023).
+    if !task_routing {
+        tools.retain(|tool| {
+            matches!(
+                tool["name"].as_str(),
+                Some("get_session_savings" | "get_savings_totals")
+            )
+        });
+    } else if workflow_routing {
         tools.extend(workflow_tools());
     }
     json!({ "tools": tools })
@@ -2474,6 +2624,9 @@ fn tool_call_response(id: Value, request: &Value, reader: &SavingsReader) -> Val
             )
         }),
         "route_task" | "report_task_result" | "route_tasks" | "report_task_results" => {
+            if !reader.task_routing {
+                return rpc_result(id, tool_error_result(TASK_ROUTING_OFF_MESSAGE));
+            }
             let arguments = request.pointer("/params/arguments").unwrap_or(&Value::Null);
             let result = match name {
                 "route_task" => reader.route_request(arguments),
@@ -2650,7 +2803,7 @@ mod tests {
             )
             .expect("GUI fixture savings should insert");
         drop(connection);
-        let reader = SavingsReader::open(SavingsMcpArgs {
+        let mut reader = SavingsReader::open(SavingsMcpArgs {
             database_path: path.clone(),
             session_id: "session-123".to_string(),
             rtk_database_path: path.with_extension("rtk"),
@@ -2658,10 +2811,29 @@ mod tests {
             conversation_id: Some("conversation-1".to_string()),
             worker_lane,
             tier_agents: TierAgentAssignments::default(),
+            task_routing: true,
             workflow_routing: true,
         })
         .expect("fixture reader should open");
+        // The temporary folder is shared, so each fixture has its own
+        // preferences file. The routing tests start with a "yes".
+        reader.preferences_path = path.with_extension("preferences.json");
+        set_fixture_brief_sharing(&reader, Some("allowed"));
         (reader, path)
+    }
+
+    /// Writes the task brief answer of a fixture. `None` removes the file.
+    fn set_fixture_brief_sharing(reader: &SavingsReader, answer: Option<&str>) {
+        match answer {
+            Some(answer) => std::fs::write(
+                &reader.preferences_path,
+                json!({ "taskRouting": true, "briefSharing": answer }).to_string(),
+            )
+            .expect("fixture preferences should write"),
+            None => {
+                let _ = std::fs::remove_file(&reader.preferences_path);
+            }
+        }
     }
 
     #[test]
@@ -2704,6 +2876,7 @@ mod tests {
             WorkerLanePreference::Codex,
             TierAgentAssignments::default(),
             true,
+            true,
         )
         .expect("launch configuration should build");
         assert_eq!(config.command, "/opt/Halv/halv");
@@ -2734,6 +2907,7 @@ mod tests {
             None,
             WorkerLanePreference::Auto,
             TierAgentAssignments::default(),
+            true,
             true,
         )
         .expect("launch configuration should build");
@@ -3179,10 +3353,13 @@ mod tests {
             conversation_id: reader.conversation_id.clone(),
             worker_lane: reader.worker_lane,
             tier_agents: reader.tier_agents.clone(),
+            task_routing: reader.task_routing,
             workflow_routing: reader.workflow_routing,
         };
+        let preferences_path = reader.preferences_path.clone();
         drop(reader);
-        let reader = SavingsReader::open(args).unwrap();
+        let mut reader = SavingsReader::open(args).unwrap();
+        reader.preferences_path = preferences_path;
         // Completed research persisted by an older build must not block a new
         // user task, and its evidence must remain available for a later L1.
         let next = call_tool(
@@ -3534,6 +3711,7 @@ mod tests {
             Some("conversation-1"),
             WorkerLanePreference::Claude,
             TierAgentAssignments::default(),
+            true,
             true,
         )
         .expect("launch configuration should build");
@@ -3888,9 +4066,12 @@ mod tests {
             json!({ "tasks": [{"key": "scout", "role": "read", "brief": "Map it."}] }),
         );
         assert_eq!(response["result"]["isError"], true);
-        assert_eq!(tools_list(false)["tools"].as_array().unwrap().len(), 4);
-        assert!(!server_instructions(false).contains("route_tasks"));
-        assert!(server_instructions(true).contains("route_tasks"));
+        assert_eq!(
+            tools_list(true, false)["tools"].as_array().unwrap().len(),
+            4
+        );
+        assert!(!server_instructions(true, false).contains("route_tasks"));
+        assert!(server_instructions(true, true).contains("route_tasks"));
         assert_eq!(requests(&fixture), 0);
     }
 
@@ -4191,6 +4372,132 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn the_task_routing_flag_parses_defaults_on_and_turns_workflow_routing_off() {
+        let base = [
+            "--database",
+            "/tmp/halv.sqlite3",
+            "--session",
+            "s",
+            "--rtk-database",
+            "/tmp/rtk",
+        ];
+        let parse = |extra: &[&str]| {
+            parse_args(base.iter().chain(extra.iter()).copied().map(OsString::from))
+        };
+        let parsed = parse(&[]).unwrap();
+        assert!(parsed.task_routing && parsed.workflow_routing);
+        let off = parse(&["--task-routing", "off"]).unwrap();
+        assert!(!off.task_routing);
+        assert!(!off.workflow_routing, "workflow routing needs task routing");
+        assert!(parse(&["--task-routing", "maybe"]).is_err());
+
+        let config = |task_routing: bool, workflow_routing: bool| {
+            launch_config_with_executable(
+                Path::new("/opt/Halv/halv"),
+                Path::new("/tmp/halv.sqlite3"),
+                "session-123",
+                Path::new("/tmp/rtk.sqlite3"),
+                None,
+                None,
+                WorkerLanePreference::Auto,
+                TierAgentAssignments::default(),
+                task_routing,
+                workflow_routing,
+            )
+            .expect("launch configuration should build")
+            .args
+        };
+        let has = |args: &[String], pair: [&str; 2]| args.windows(2).any(|item| item == pair);
+        // The default argument set stays the same as in older apps.
+        let on = config(true, true);
+        assert!(!on.iter().any(|argument| argument == "--task-routing"));
+        assert!(!on.iter().any(|argument| argument == "--workflow-routing"));
+        let off = config(false, true);
+        assert!(has(&off, ["--task-routing", "off"]));
+        assert!(has(&off, ["--workflow-routing", "off"]));
+        let parsed = parse_args(off.iter().skip(1).map(OsString::from)).unwrap();
+        assert!(!parsed.task_routing && !parsed.workflow_routing);
+    }
+
+    #[test]
+    fn task_routing_off_lists_and_answers_only_the_savings_tools() {
+        let (server_url, requests) =
+            spawn_workflow_route_server(std::time::Duration::from_millis(0));
+        let (mut reader, path) = fixture_reader();
+        sign_in_fixture(&path, &server_url);
+        reader.task_routing = false;
+        reader.workflow_routing = false;
+
+        let names = |list: Value| {
+            list["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(tools_list(false, true)),
+            vec!["get_session_savings", "get_savings_totals"]
+        );
+        assert!(names(tools_list(true, false)).contains(&"route_task".to_string()));
+        let instructions = server_instructions(false, true);
+        assert!(!instructions.contains("route_task"), "{instructions}");
+
+        let input = [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}}),
+        ]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        let mut output = Vec::new();
+        serve(Cursor::new(input), &mut output, &reader).expect("server should complete");
+        let text = String::from_utf8(output).unwrap();
+        let mut lines = text
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap());
+        let listed = lines.next().unwrap();
+        assert_eq!(
+            names(listed["result"].clone()),
+            vec!["get_session_savings", "get_savings_totals"]
+        );
+        let initialized = lines.next().unwrap();
+        assert!(!initialized["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("route_task"));
+
+        for (id, name, arguments) in [
+            (3, "route_task", json!({ "brief": "Fix the login button" })),
+            (
+                4,
+                "report_task_result",
+                json!({ "taskId": "x", "passed": true }),
+            ),
+            (
+                5,
+                "route_tasks",
+                json!({ "tasks": [{"key": "scout", "role": "read", "brief": "Map it."}] }),
+            ),
+            (6, "report_task_results", json!({ "results": [] })),
+        ] {
+            let response = call_tool(&reader, id, name, arguments);
+            assert_eq!(response["result"]["isError"], true, "{name}: {response}");
+            assert_eq!(
+                response["result"]["content"][0]["text"], TASK_ROUTING_OFF_MESSAGE,
+                "{name}"
+            );
+        }
+        let savings = call_tool(&reader, 7, "get_session_savings", json!({}));
+        assert_eq!(savings["result"]["isError"], false, "{savings}");
+        assert_eq!(request_count(&requests), 0);
+        assert!(stored_routes(&path).is_empty());
+        remove_brief_fixture(reader, path);
+    }
+
     /// Answers every route request with one HTTP status and no body.
     fn spawn_refusing_route_server(status: &'static str) -> String {
         use std::io::Read;
@@ -4396,5 +4703,270 @@ mod tests {
         assert_eq!(structured["fallback"]["fix"], HALV_CLOUD_REQUIRED_MESSAGE);
         drop(reader);
         let _ = std::fs::remove_file(path);
+    }
+
+    /// A fixture with a session at a server that counts its requests.
+    fn counted_brief_fixture(
+        entitlements_json: Option<&str>,
+    ) -> (
+        SavingsReader,
+        PathBuf,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        std::env::set_var(QUOTA_PROBE_ENVIRONMENT_VARIABLE, "off");
+        let (reader, path) = fixture_reader();
+        let (server_url, requests) =
+            spawn_workflow_route_server(std::time::Duration::from_millis(0));
+        Connection::open(&path)
+            .expect("fixture database should reopen")
+            .execute(
+                "INSERT INTO auth_session (id, server_url, token, plan, entitlements_json)
+                 VALUES (1, ?1, 'test-token', 'basic', ?2)",
+                params![server_url, entitlements_json],
+            )
+            .expect("auth session should insert");
+        (reader, path, requests)
+    }
+
+    fn request_count(requests: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> usize {
+        requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn remove_brief_fixture(reader: SavingsReader, path: PathBuf) {
+        let _ = std::fs::remove_file(&reader.preferences_path);
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn assert_parent_route(response: &Value, reason: &str, message: &str) {
+        let result = &response["result"];
+        assert_eq!(result["isError"], false, "{response}");
+        let payload = &result["structuredContent"];
+        assert_eq!(payload["tier"], "max", "{response}");
+        assert_eq!(payload["action"], EXECUTE_IN_PARENT, "{response}");
+        assert_eq!(payload["reason"], reason, "{response}");
+        assert_eq!(payload["reasons"], json!([reason]), "{response}");
+        assert_eq!(payload["provider"], reason, "{response}");
+        assert_eq!(payload["model"], Value::Null, "{response}");
+        let text = result["content"][0]["text"].as_str().expect("route text");
+        assert!(text.contains(message), "{text}");
+        assert!(
+            text.contains("Do this task yourself at the coordinator tier"),
+            "{text}"
+        );
+        assert!(!text.contains("spawn_agent now"), "{text}");
+    }
+
+    #[test]
+    fn the_mcp_sends_no_brief_without_a_yes() {
+        // No file, a damaged file, an unset answer, and a "no" all keep the
+        // brief on the device.
+        for answer in [None, Some("maybe"), Some("unset"), Some("declined")] {
+            let (reader, path, requests) = counted_brief_fixture(None);
+            set_fixture_brief_sharing(&reader, answer);
+            let response = call_tool(
+                &reader,
+                1,
+                "route_task",
+                json!({ "brief": "Fix the login button" }),
+            );
+            assert_parent_route(&response, BRIEF_SHARING_OFF, BRIEF_SHARING_OFF_MESSAGE);
+            let batch = call_tool(
+                &reader,
+                2,
+                "route_tasks",
+                json!({
+                    "workflow": "fix-findings",
+                    "tasks": [
+                        {"key": "fix", "role": "implement", "brief": "Fix one finding."},
+                        {"key": "check", "role": "verify", "brief": "Review the fix."},
+                    ],
+                }),
+            );
+            assert_eq!(batch["result"]["isError"], false, "{batch}");
+            let structured = &batch["result"]["structuredContent"];
+            assert_eq!(structured["reason"], BRIEF_SHARING_OFF, "{answer:?}");
+            for key in ["fix", "check"] {
+                assert_eq!(structured["fallback"][key], BRIEF_SHARING_OFF_MESSAGE);
+            }
+            assert_eq!(request_count(&requests), 0, "{answer:?}");
+            // The route stays on the device, so the coordinator can report it.
+            let routes = stored_routes(&path);
+            assert!(routes
+                .iter()
+                .any(|route| route.reasons == vec![BRIEF_SHARING_OFF.to_string()]));
+            let task_id = response["result"]["structuredContent"]["taskId"].clone();
+            let report = call_tool(
+                &reader,
+                3,
+                "report_task_result",
+                json!({ "taskId": task_id, "passed": true }),
+            );
+            assert_eq!(report["result"]["isError"], false, "{report}");
+            assert_eq!(request_count(&requests), 0, "{answer:?}");
+            remove_brief_fixture(reader, path);
+        }
+    }
+
+    #[test]
+    fn a_no_in_settings_stops_the_next_brief_of_a_running_session() {
+        let (reader, path, requests) = counted_brief_fixture(None);
+        let response = call_tool(
+            &reader,
+            1,
+            "route_task",
+            json!({ "brief": "Rename one variable." }),
+        );
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(request_count(&requests), 1);
+        set_fixture_brief_sharing(&reader, Some("declined"));
+        let response = call_tool(
+            &reader,
+            2,
+            "route_task",
+            json!({ "brief": "Rename another variable." }),
+        );
+        assert_parent_route(&response, BRIEF_SHARING_OFF, BRIEF_SHARING_OFF_MESSAGE);
+        assert_eq!(request_count(&requests), 1);
+        remove_brief_fixture(reader, path);
+    }
+
+    #[test]
+    fn cached_entitlements_without_halv_cloud_send_no_brief() {
+        let no_plan = json!({
+            "beta": false,
+            "billingRequired": true,
+            "canUseApp": false,
+            "plan": "none",
+            "message": null,
+            "checkoutUrl": null,
+        })
+        .to_string();
+        let unpaid = json!({
+            "beta": false,
+            "billingRequired": true,
+            "canUseApp": true,
+            "plan": "basic",
+            "message": null,
+            "checkoutUrl": null,
+            "paymentIssue": "unpaid",
+        })
+        .to_string();
+        for entitlements in [no_plan, unpaid] {
+            // The answer does not matter: the server would refuse.
+            for answer in ["allowed", "unset"] {
+                let (reader, path, requests) = counted_brief_fixture(Some(&entitlements));
+                set_fixture_brief_sharing(&reader, Some(answer));
+                let response = call_tool(
+                    &reader,
+                    1,
+                    "route_task",
+                    json!({ "brief": "Fix the login button" }),
+                );
+                assert_parent_route(&response, HALV_CLOUD_REQUIRED, HALV_CLOUD_REQUIRED_MESSAGE);
+                assert_eq!(request_count(&requests), 0, "{entitlements} {answer}");
+                remove_brief_fixture(reader, path);
+            }
+        }
+    }
+
+    #[test]
+    fn granted_or_unknown_entitlements_send_a_brief_only_after_a_yes() {
+        let granted = json!({
+            "beta": false,
+            "billingRequired": true,
+            "canUseApp": true,
+            "plan": "basic",
+            "message": null,
+            "checkoutUrl": null,
+        })
+        .to_string();
+        for entitlements in [Some(granted.as_str()), None, Some("{ damaged")] {
+            let (reader, path, requests) = counted_brief_fixture(entitlements);
+            set_fixture_brief_sharing(&reader, Some("unset"));
+            let response = call_tool(&reader, 1, "route_task", json!({ "brief": "Fix one bug." }));
+            assert_parent_route(&response, BRIEF_SHARING_OFF, BRIEF_SHARING_OFF_MESSAGE);
+            assert_eq!(request_count(&requests), 0, "{entitlements:?}");
+            set_fixture_brief_sharing(&reader, Some("allowed"));
+            let response = call_tool(&reader, 2, "route_task", json!({ "brief": "Fix one bug." }));
+            assert_eq!(response["result"]["isError"], false, "{response}");
+            assert_eq!(response["result"]["structuredContent"]["provider"], "jev");
+            assert_eq!(request_count(&requests), 1, "{entitlements:?}");
+            remove_brief_fixture(reader, path);
+        }
+    }
+
+    #[test]
+    fn a_signed_out_user_hears_about_sign_in_before_brief_sharing() {
+        std::env::set_var(QUOTA_PROBE_ENVIRONMENT_VARIABLE, "off");
+        let (reader, path) = fixture_reader();
+        set_fixture_brief_sharing(&reader, Some("unset"));
+        let response = call_tool(&reader, 1, "route_task", json!({ "brief": "Fix one bug." }));
+        assert_parent_route(&response, SIGN_IN_REQUIRED, SIGN_IN_REQUIRED_MESSAGE);
+        remove_brief_fixture(reader, path);
+    }
+
+    #[test]
+    fn cached_cloud_access_follows_the_app_rules() {
+        let entitlements = |can_use_app: bool, plan: &str, payment_issue: Option<&str>| {
+            json!({
+                "beta": false,
+                "billingRequired": true,
+                "canUseApp": can_use_app,
+                "plan": plan,
+                "message": null,
+                "checkoutUrl": null,
+                "paymentIssue": payment_issue,
+            })
+            .to_string()
+        };
+        let cases = [
+            (None, CachedCloudAccess::Unknown),
+            (Some("not json".to_string()), CachedCloudAccess::Unknown),
+            (
+                Some(entitlements(true, "basic", None)),
+                CachedCloudAccess::Granted,
+            ),
+            (
+                Some(entitlements(true, "none", None)),
+                CachedCloudAccess::Granted,
+            ),
+            (
+                Some(entitlements(true, "basic", Some("unpaid"))),
+                CachedCloudAccess::Denied,
+            ),
+            (
+                Some(entitlements(true, "basic", Some("past_due"))),
+                CachedCloudAccess::Granted,
+            ),
+            (
+                Some(entitlements(false, "none", None)),
+                CachedCloudAccess::Denied,
+            ),
+            (
+                Some(entitlements(false, "beta_free", None)),
+                CachedCloudAccess::Granted,
+            ),
+            (
+                Some(entitlements(false, "beta_free", Some("past_due"))),
+                CachedCloudAccess::Denied,
+            ),
+            (
+                Some(entitlements(false, "", None)),
+                CachedCloudAccess::Denied,
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(
+                cached_cloud_access(value.as_deref(), None),
+                expected,
+                "{value:?}"
+            );
+        }
+        // The cached plan counts when the entitlements have none.
+        assert_eq!(
+            cached_cloud_access(Some(&entitlements(false, "", None)), Some("beta_free")),
+            CachedCloudAccess::Granted
+        );
     }
 }

@@ -1,4 +1,12 @@
-import type { AppPreferences } from "./types.ts";
+import type { AppPreferences, BriefSharing } from "./types.ts";
+
+/**
+ * The saved answer to the task brief question (ADR 0023). A missing key, a
+ * damaged value, or a failed load reads `unset`, so Halv sends no brief.
+ */
+export function briefSharingAnswer(value: unknown): BriefSharing {
+  return value === "allowed" || value === "declined" ? value : "unset";
+}
 
 /**
  * The Dot pin shows only when the user turned it on. A missing key, a missing

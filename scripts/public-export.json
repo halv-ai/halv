@@ -1,0 +1,50 @@
+{
+  "$comment": "scripts/export-public.mjs reads this file and scripts/public-export.private.json from the exported revision. This file holds only the generic rules. The private file holds the private paths and the hashes of personal identifiers, and the export never copies it. RELEASING.md describes the export.",
+  "target": "../oss",
+  "overlayDir": "scripts/public-overlay",
+  "requirePrivateConfig": true,
+  "exclude": [
+    "server/",
+    "relay/",
+    "mobile/",
+    "docs/agents/",
+    "/CLAUDE.md"
+  ],
+  "denyPaths": [
+    "server/",
+    "relay/",
+    "mobile/",
+    "docs/agents/",
+    "*.sqlite*",
+    ".env*",
+    "*.p12",
+    "*.p8",
+    "*.mobileprovision",
+    "*.ipa",
+    "*.pem",
+    "*.key"
+  ],
+  "denyContent": [
+    { "id": "github-token", "pattern": "\\bgh[pousr]_[A-Za-z0-9]{36,}" },
+    { "id": "github-pat", "pattern": "\\bgithub_pat_[A-Za-z0-9_]{22,}" },
+    { "id": "anthropic-key", "pattern": "\\bsk-ant-[A-Za-z0-9_-]{20,}" },
+    { "id": "sk-key", "pattern": "\\bsk-[A-Za-z0-9_-]{32,}" },
+    { "id": "stripe-key", "pattern": "\\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}" },
+    { "id": "stripe-webhook-secret", "pattern": "\\bwhsec_[A-Za-z0-9]{24,}" },
+    { "id": "aws-access-key", "pattern": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b" },
+    { "id": "google-api-key", "pattern": "\\bAIza[0-9A-Za-z_-]{35}" },
+    { "id": "slack-token", "pattern": "\\bxox[abprs]-[A-Za-z0-9-]{10,}" },
+    { "id": "npm-token", "pattern": "\\bnpm_[A-Za-z0-9]{36}\\b" },
+    { "id": "fly-token", "pattern": "\\bFlyV1 fm\\d_[A-Za-z0-9+/=_-]{20,}|\\bfo1_[A-Za-z0-9_-]{20,}" },
+    { "id": "posthog-key", "pattern": "\\bph[cx]_[A-Za-z0-9]{32,}" },
+    { "id": "jwt", "pattern": "\\beyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{16,}" },
+    { "id": "private-key", "pattern": "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----" },
+    { "id": "tauri-updater-secret-key", "pattern": "rsign encrypted secret[ ]key|dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V[5]" },
+    { "id": "url-password", "pattern": "\\b[a-z][a-z0-9+.-]*://[^\\s/:@\"'`<>]+:[^\\s/@\"'`<>]+@[^\\s/\"'`<>]+" }
+  ],
+  "allowlist": [
+    { "path": "/src-tauri/src/browser.rs", "rule": "url-password", "match": "user:secret@example.com", "reason": "Test: the browser refuses a URL with credentials." },
+    { "path": "/src-tauri/src/extensions.rs", "rule": "url-password", "match": "user:secret@example.com", "reason": "Test: an MCP server URL with credentials is invalid." },
+    { "path": "/src-tauri/src/dot_webview.rs", "rule": "url-password", "match": "u:p@chatgpt.com", "reason": "Test: the Dot webview refuses a URL with credentials." }
+  ]
+}

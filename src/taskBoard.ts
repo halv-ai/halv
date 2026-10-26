@@ -356,6 +356,7 @@ export function taskRouteReasonLabel(
 ) {
   if (reason === "halv_cloud_required") return t("Needs Halv Cloud");
   if (reason === "sign_in_required") return t("Sign in needed");
+  if (reason === "brief_sharing_off") return t("Task briefs declined");
   return reason;
 }
 

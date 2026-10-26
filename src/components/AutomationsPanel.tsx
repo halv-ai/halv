@@ -13,6 +13,19 @@ import type {
   Project,
 } from "../types";
 
+/**
+ * Cloud handoff posts the prompt and the repository to halv.ai, but no
+ * worker runs these tasks yet (ADR 0023). The panel offers the target again
+ * when a worker exists. It matches `CLOUD_HANDOFF_ENABLED` in
+ * `src-tauri/src/automations.rs`.
+ */
+export const CLOUD_HANDOFF_ENABLED = false;
+
+/** A cloud automation while cloud handoff is off: it does not run. */
+function cloudHandoffPaused(automation: Pick<Automation, "target">) {
+  return automation.target === "cloud" && !CLOUD_HANDOFF_ENABLED;
+}
+
 type AutomationsPanelProps = {
   open: boolean;
   projects: Project[];
@@ -588,7 +601,13 @@ export function AutomationsPanel({
                       value={target}
                     >
                       <option value="local">{t("Local background")}</option>
-                      <option value="cloud">{t("Cloud handoff")}</option>
+                      {CLOUD_HANDOFF_ENABLED || target === "cloud" ? (
+                        // An existing cloud automation keeps its target on
+                        // an edit, but no automation can move to it.
+                        <option disabled={!CLOUD_HANDOFF_ENABLED} value="cloud">
+                          {t("Cloud handoff")}
+                        </option>
+                      ) : null}
                     </select>
                   </label>
                   <label className="text-xs text-content-muted">
@@ -709,7 +728,7 @@ export function AutomationsPanel({
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="text-sm font-medium text-content-primary">{automation.name}</p>
-                            {!automation.enabled ? <span className="rounded bg-surface-raised px-1.5 py-0.5 text-[9px] uppercase text-content-muted">{t("paused")}</span> : null}
+                            {!automation.enabled || cloudHandoffPaused(automation) ? <span className="rounded bg-surface-raised px-1.5 py-0.5 text-[9px] uppercase text-content-muted">{t("paused")}</span> : null}
                             {automation.runs.some((run) => run.unread) ? <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] uppercase text-accent">{t("unread")}</span> : null}
                           </div>
                           <p className="mt-1 line-clamp-2 text-xs text-content-muted">{automation.prompt}</p>
@@ -724,13 +743,23 @@ export function AutomationsPanel({
                           <p className="mt-1 font-mono text-[10px] text-content-muted">
                             {automationContextLabel(automation, t)}
                           </p>
+                          {cloudHandoffPaused(automation) ? (
+                            <p
+                              className="mt-1 text-[10px] text-warning"
+                              data-testid="automation-cloud-paused"
+                            >
+                              {t(
+                                "Paused: cloud handoff is not available yet. Halv does not run this automation.",
+                              )}
+                            </p>
+                          ) : null}
                           {automation.lastStatus ? (
                             <p className={`mt-1 text-[10px] ${automation.lastStatus === "failed" ? "text-danger" : "text-content-muted"}`}>
                               {lastRunLabel(automation, t)}
                             </p>
                           ) : null}
                         </div>
-                        <button className="text-xs text-accent hover:underline" disabled={busy} onClick={() => void mutate(() => ipc.automation.runNow({ automationId: automation.id }))} type="button">{t("Run now")}</button>
+                        <button className="text-xs text-accent hover:underline disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || cloudHandoffPaused(automation)} onClick={() => void mutate(() => ipc.automation.runNow({ automationId: automation.id }))} type="button">{t("Run now")}</button>
                         <button className="text-xs text-content-muted hover:text-content-primary" disabled={busy} onClick={() => editAutomation(automation)} type="button">{t("Edit")}</button>
                         <button className="text-xs text-content-muted hover:text-content-primary" disabled={busy} onClick={() => void mutate(() => ipc.automation.setEnabled({ automationId: automation.id, enabled: !automation.enabled }))} type="button">{automation.enabled ? t("Pause") : t("Enable")}</button>
                         <button className="text-xs text-content-muted hover:text-danger" disabled={busy} onClick={() => void mutate(() => ipc.automation.delete({ automationId: automation.id }))} type="button">{t("Delete")}</button>

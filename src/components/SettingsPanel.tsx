@@ -70,6 +70,7 @@ import type {
   AgentMemory,
   AccountAuthStatus,
   AppPreferences,
+  BriefSharing,
   CredentialProfile,
   SavingsToday,
   SavingsTotals,
@@ -90,6 +91,12 @@ import {
   ConsentRecord,
 } from "./AnonymousUsagePreference";
 import { HalvCloudCard } from "./HalvCloudCard";
+import {
+  BriefSharingFacts,
+  BriefSharingLearnMore,
+} from "./BriefSharingPrompt";
+import { briefSharingAnswer } from "../briefSharing.ts";
+import { briefSharingGate } from "../briefSharingGate.ts";
 
 const HEADROOM_INSTALL_COMMAND = 'pipx install "headroom-ai[proxy]"';
 const HEADROOM_PIP_FALLBACK_COMMAND =
@@ -314,6 +321,34 @@ export function SettingsPanel({
   const [taskRoutingError, setTaskRoutingError] = useState<string | null>(null);
   const [taskRoutingNotice, setTaskRoutingNotice] = useState<string | null>(null);
   const [workflowRouting, setWorkflowRouting] = useState(true);
+  // The answer to the task brief question (ADR 0023).
+  const [briefSharing, setBriefSharing] = useState<BriefSharing>("unset");
+  const [briefSharingSavePending, setBriefSharingSavePending] = useState(false);
+  const [briefSharingError, setBriefSharingError] = useState<string | null>(null);
+  const [briefSharingNotice, setBriefSharingNotice] = useState<string | null>(null);
+  // An answer in the prompt or the card can arrive while Settings is open.
+  // When the question closes, Settings reads the saved answer again.
+  const briefSharingSurface = useSyncExternalStore(
+    briefSharingGate.subscribe,
+    () => briefSharingGate.getSnapshot().surface,
+    () => briefSharingGate.getSnapshot().surface,
+  );
+  const previousBriefSharingSurface = useRef(briefSharingSurface);
+  useEffect(() => {
+    const previous = previousBriefSharingSurface.current;
+    previousBriefSharingSurface.current = briefSharingSurface;
+    if (!open || previous === "none" || briefSharingSurface !== "none") return;
+    let disposed = false;
+    void ipc.preferences
+      .get()
+      .then((preferences) => {
+        if (!disposed) setBriefSharing(briefSharingAnswer(preferences.briefSharing));
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [briefSharingSurface, open]);
   // "Keep going without it" hides the Halv Cloud card for one visit of the
   // routing section (ADR 0021). A new visit shows the card again.
   const [routingCloudDismissed, setRoutingCloudDismissed] = useState(false);
@@ -485,6 +520,7 @@ export function SettingsPanel({
         setPonytail(preferences.ponytail ?? "off");
         setTaskRouting(preferences.taskRouting ?? true);
         setWorkflowRouting(preferences.workflowRouting ?? true);
+        setBriefSharing(briefSharingAnswer(preferences.briefSharing));
         setClaudeUltracode(preferences.claudeUltracode ?? false);
         const legacyLane = preferences.workerLane ?? "auto";
         setRoutingTierAgents(
@@ -1126,6 +1162,34 @@ export function SettingsPanel({
       );
     } finally {
       setTaskRoutingSavePending(false);
+    }
+  }
+
+  async function saveBriefSharing(answer: Exclude<BriefSharing, "unset">) {
+    setBriefSharingSavePending(true);
+    setBriefSharingError(null);
+    setBriefSharingNotice(null);
+    try {
+      const preferences = await ipc.preferences.setBriefSharing({
+        briefSharing: answer,
+      });
+      const saved = briefSharingAnswer(preferences.briefSharing);
+      setBriefSharing(saved);
+      // An open question in the app closes with this answer.
+      briefSharingGate.applyPreferences(preferences);
+      setBriefSharingNotice(
+        saved === "allowed"
+          ? t("Task briefs allowed. New agent sessions route tasks.")
+          : t("Task briefs declined. Halv sends no brief."),
+      );
+    } catch (error) {
+      setBriefSharingError(
+        t("Could not save your answer: {error}", {
+          error: errorMessage(error),
+        }),
+      );
+    } finally {
+      setBriefSharingSavePending(false);
     }
   }
 
@@ -2721,7 +2785,7 @@ export function SettingsPanel({
               </h4>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
                 {t(
-                  "Halv sends each task brief to a small decision model and picks the cheapest agent that can do it. The coordinator model is the ceiling. Briefs leave this computer.",
+                  "Halv sends each task brief to a small decision model and picks the cheapest agent that can do it. The coordinator model is the ceiling.",
                 )}
               </p>
             </div>
@@ -2754,6 +2818,73 @@ export function SettingsPanel({
                 {taskRoutingNotice}
               </p>
             ) : null}
+            <div
+              className="space-y-3 border-t border-surface-border/25 pt-5"
+              data-testid="brief-sharing-settings"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h5 className="text-sm font-medium text-content-primary">
+                  {t("Task briefs")}
+                </h5>
+                <span
+                  className="text-xs text-content-muted"
+                  data-testid="brief-sharing-status"
+                >
+                  {briefSharing === "allowed"
+                    ? t("Allowed")
+                    : briefSharing === "declined"
+                      ? t("Declined")
+                      : t("Not decided yet")}
+                </span>
+              </div>
+              <p className="text-sm text-content-secondary">
+                {t(
+                  "Task routing works only after you allow task briefs. Until then, Halv sends nothing and the agent does each task itself.",
+                )}
+              </p>
+              <BriefSharingFacts t={t} />
+              <BriefSharingLearnMore t={t} />
+              <div
+                aria-label={t("Task briefs")}
+                className="grid grid-cols-2 gap-2"
+                role="group"
+              >
+                {(
+                  [
+                    { answer: "allowed", label: t("Allowed") },
+                    { answer: "declined", label: t("Declined") },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    aria-pressed={briefSharing === option.answer}
+                    className={`rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-accent/30 ${
+                      briefSharing === option.answer
+                        ? "border-accent/60 bg-accent/10 text-content-primary"
+                        : "border-surface-border/30 text-content-secondary hover:bg-surface-raised"
+                    }`}
+                    disabled={
+                      preferencesLoadState !== "loaded" ||
+                      briefSharingSavePending
+                    }
+                    key={option.answer}
+                    onClick={() => void saveBriefSharing(option.answer)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {briefSharingError ? (
+                <p className="text-xs text-danger" role="alert">
+                  {briefSharingError}
+                </p>
+              ) : null}
+              {briefSharingNotice ? (
+                <p className="text-xs text-accent" role="status">
+                  {briefSharingNotice}
+                </p>
+              ) : null}
+            </div>
             <div className="space-y-2 border-t border-surface-border/25 pt-5">
               <h5 className="text-sm font-medium text-content-primary">
                 {t("Ultracode")}

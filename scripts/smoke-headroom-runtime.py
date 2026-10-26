@@ -89,6 +89,75 @@ def runtime_path(argument: str) -> Path:
     return path
 
 
+def check_offline_data(runtime: Path) -> str:
+    """Run the frozen offline self-check and inspect the bundled license index."""
+    # Parent values that would turn the offline data and the HF pins off. The
+    # frozen entry point must replace each one.
+    environment = {
+        **os.environ,
+        "HEADROOM_HF_PIN": "off",
+        "TIKTOKEN_CACHE_DIR": str(Path(tempfile.gettempdir()) / "halv-smoke-no-tiktoken-cache"),
+        "LITELLM_LOCAL_MODEL_COST_MAP": "False",
+    }
+    result = subprocess.run(
+        [str(runtime), "--offline-self-check"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=environment,
+    )
+    try:
+        report = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError) as error:
+        raise RuntimeError(
+            f"offline self-check printed no report (exit {result.returncode}): "
+            f"{result.stderr[-4000:]}"
+        ) from error
+    if result.returncode != 0 or report.get("failures"):
+        raise RuntimeError(f"offline self-check failed: {report.get('failures')!r}")
+    env = report.get("env", {})
+    cache_dir = Path(str(env.get("TIKTOKEN_CACHE_DIR") or ""))
+    if not cache_dir.is_dir() or runtime.parent.resolve() not in cache_dir.resolve().parents:
+        raise RuntimeError(f"tiktoken cache is not the bundled one: {cache_dir}")
+    if env.get("LITELLM_LOCAL_MODEL_COST_MAP") != "True":
+        raise RuntimeError("LiteLLM does not use its local model cost map")
+    if env.get("HEADROOM_HF_PIN") != "on":
+        raise RuntimeError(f"HEADROOM_HF_PIN is {env.get('HEADROOM_HF_PIN')!r}, not on")
+    if not report.get("hfPins"):
+        raise RuntimeError("the frozen runtime reports no HuggingFace revision pins")
+    encodings = report.get("tiktoken", {})
+    if sorted(encodings) != ["cl100k_base", "o200k_base", "p50k_base", "r50k_base"]:
+        raise RuntimeError(f"offline tiktoken encodings are incomplete: {encodings!r}")
+
+    index_path = runtime.parent / "_internal" / "licenses" / "python" / "INDEX.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    distributions = index.get("distributions") or []
+    names = {entry.get("name") for entry in distributions}
+    for required in ("headroom-ai", "tiktoken", "litellm", "setuptools"):
+        if required not in names:
+            raise RuntimeError(f"license index has no entry for {required}")
+    for build_tool in ("pyinstaller", "pyinstaller-hooks-contrib", "altgraph"):
+        if build_tool in names:
+            raise RuntimeError(f"license index lists the build-only tool {build_tool}")
+    missing = 0
+    for entry in distributions:
+        files = entry.get("files")
+        if files == "missing":
+            missing += 1
+            continue
+        if not isinstance(files, list) or not files:
+            raise RuntimeError(f"license index entry has no file list: {entry.get('name')}")
+        for relative in files:
+            if not (index_path.parent / relative).is_file():
+                raise RuntimeError(f"license index names a file that is not bundled: {relative}")
+    return (
+        f"offline data ok ({len(encodings)} tiktoken encodings, "
+        f"{report.get('litellmModelCostEntries')} LiteLLM cost entries, "
+        f"{len(report.get('hfPins', {}))} HF pins, {len(distributions)} license entries, "
+        f"{missing} without a license file)"
+    )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: smoke-headroom-runtime.py <runtime executable or onedir>", file=sys.stderr)
@@ -116,6 +185,8 @@ def main() -> int:
         raise RuntimeError(
             f"runtime does not declare Code-Aware packaging: {build_info!r}"
         )
+
+    offline_summary = check_offline_data(runtime)
 
     upstream_port = free_port()
     proxy_port = free_port()
@@ -242,7 +313,8 @@ def main() -> int:
 
                 print(
                     f"PASS {version}: first /v1/responses input {original_size} -> "
-                    f"{forwarded_size} bytes; /stats saved={int(saved)}; Code-Aware loaded"
+                    f"{forwarded_size} bytes; /stats saved={int(saved)}; Code-Aware loaded; "
+                    f"{offline_summary}"
                 )
             except Exception:
                 log.flush()

@@ -8,6 +8,7 @@ import type {
   AppUpdateSnapshot,
   BillingPrices,
   BranchStatus,
+  BriefSharing,
   ChatDeltaPayload,
   ChatSendResponse,
   ConversationCompaction,
@@ -709,6 +710,7 @@ export class FixtureTransport implements Transport {
     defaultFastMode: false,
     taskRouting: true,
     workflowRouting: true,
+    briefSharing: "unset",
     claudeUltracode: false,
     showDotShortcut: false,
     workerLane: "auto",
@@ -741,6 +743,12 @@ export class FixtureTransport implements Transport {
     this.preferences.analyticsConsentVersion = consent.version;
     this.preferences.analyticsConsentAsked = consent.asked;
     this.downloadId = harnessDownloadId(search?.get("download") ?? null);
+    // ?briefs=unset|allowed|declined selects the task brief answer for QA.
+    this.preferences.briefSharing = harnessBriefSharing(
+      state.scenario,
+      state.fixture.briefSharing ?? null,
+      search?.get("briefs") ?? null,
+    );
     // ?engine=off|on|restored selects the Halv Engine switch for QA.
     // "restored" is off, but the engine runs for restored sessions until
     // quit. Without it, the switch follows the fixture: an "off" sidecar
@@ -1525,6 +1533,13 @@ export class FixtureTransport implements Transport {
         return clone(this.preferences);
       case "preferences_set_workflow_routing":
         this.preferences.workflowRouting = Boolean(args.workflowRouting);
+        return clone(this.preferences);
+      case "preferences_set_brief_sharing":
+        // `unset` is not an answer, as in the native command (ADR 0023).
+        if (args.briefSharing !== "allowed" && args.briefSharing !== "declined") {
+          throw new Error("Task brief sharing must be allowed or declined");
+        }
+        this.preferences.briefSharing = args.briefSharing;
         return clone(this.preferences);
       case "preferences_set_claude_ultracode":
         this.preferences.claudeUltracode = Boolean(args.claudeUltracode);
@@ -4546,6 +4561,7 @@ export const fixtureCommandHandlers: Record<
   preferences_set_task_routing: routeFixtureCommand("preferences_set_task_routing"),
   preferences_set_worker_lane: routeFixtureCommand("preferences_set_worker_lane"),
   preferences_set_workflow_routing: routeFixtureCommand("preferences_set_workflow_routing"),
+  preferences_set_brief_sharing: routeFixtureCommand("preferences_set_brief_sharing"),
   preferences_set_claude_ultracode: routeFixtureCommand("preferences_set_claude_ultracode"),
   preferences_set_show_dot_shortcut: routeFixtureCommand("preferences_set_show_dot_shortcut"),
   preferences_set_routing_tier_agents: routeFixtureCommand("preferences_set_routing_tier_agents"),
@@ -4781,6 +4797,20 @@ function harnessAnalyticsConsent(
         ? "unset"
         : "on";
   return { consent, version: 2, asked: consent === "unset" ? 0 : 2 };
+}
+
+// A fresh install has no answer. Other scenarios allowed briefs, so their
+// launches do not stop at the question. The fixture and ?briefs= override it.
+function harnessBriefSharing(
+  scenario: HarnessFixtureState["scenario"],
+  fixture: BriefSharing | null,
+  preset: string | null,
+): BriefSharing {
+  if (preset === "unset" || preset === "allowed" || preset === "declined") {
+    return preset;
+  }
+  if (fixture) return fixture;
+  return scenario === "fresh" ? "unset" : "allowed";
 }
 
 function harnessDownloadId(preset: string | null): string | null {

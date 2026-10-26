@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -32,6 +33,15 @@ const EXPECTED_RTK_LICENSE = join(
   "licenses",
   RTK_LICENSE,
 );
+// scripts/collect-third-party-licenses.mjs makes this file.
+const THIRD_PARTY_LICENSES = "THIRD_PARTY_LICENSES.md";
+// Key packages of the app. A third-party license list that does not name each
+// one is not complete.
+const REQUIRED_THIRD_PARTY_PACKAGES = [
+  { section: "Rust crates", kind: "crate", name: "tauri" },
+  { section: "Rust crates", kind: "crate", name: "reqwest" },
+  { section: "npm packages", kind: "npm package", name: "react" },
+];
 // Each license file that the bundle installs in its licenses/ folder, with the
 // source file that tauri.conf.json copies there.
 const LICENSE_SOURCES = {
@@ -40,9 +50,15 @@ const LICENSE_SOURCES = {
   "THIRD_PARTY_NOTICES.md": join(APP_ROOT, "THIRD_PARTY_NOTICES.md"),
   [RTK_LICENSE]: EXPECTED_RTK_LICENSE,
   ...Object.fromEntries(
-    ["crux", "orca", "ponytail", "lucide"].map((name) => [
-      `${name}-LICENSE`,
-      join(APP_ROOT, "src-tauri", "resources", "licenses", `${name}-LICENSE`),
+    [
+      "crux-LICENSE",
+      "orca-LICENSE",
+      "ponytail-LICENSE",
+      "lucide-LICENSE",
+      THIRD_PARTY_LICENSES,
+    ].map((name) => [
+      name,
+      join(APP_ROOT, "src-tauri", "resources", "licenses", name),
     ]),
   ),
 };
@@ -286,8 +302,41 @@ function windowsBundleComponents(extractionRoot, target) {
   };
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+// Gives the text of one "## <title>" part of a Markdown file, or "".
+function markdownSection(text, title) {
+  const start = text.indexOf(`\n## ${title}\n`);
+  if (start === -1) {
+    return "";
+  }
+  const end = text.indexOf("\n## ", start + 1);
+  return text.slice(start, end === -1 ? text.length : end);
+}
+
+// Checks the installed third-party license list. It must not be empty, and it
+// must name the key crates and npm packages of the app.
+export function verifyThirdPartyLicenses(path) {
+  invariant(
+    existsSync(path) && statSync(path).isFile(),
+    `installed third-party license list is missing: ${path}`,
+  );
+  const text = readFileSync(path, "utf8").replace(/\r\n/gu, "\n");
+  invariant(text.trim().length > 0, `installed third-party license list is empty: ${path}`);
+  for (const { section, kind, name } of REQUIRED_THIRD_PARTY_PACKAGES) {
+    invariant(
+      new RegExp(`^### ${escapeRegExp(name)} \\d`, "mu").test(markdownSection(text, section)),
+      `installed third-party license list does not name the ${name} ${kind}: ${path}`,
+    );
+  }
+  return path;
+}
+
 // Checks the licenses/ folder of the bundle. The RTK license must match the
-// pinned release license. Each other file must match its source file.
+// pinned release license. The third-party license list must name the key
+// packages. Each other file must match its source file.
 function verifyLicenses(resourceDir) {
   const license = join(resourceDir, "licenses", RTK_LICENSE);
   invariant(
@@ -298,6 +347,7 @@ function verifyLicenses(resourceDir) {
     readFileSync(license).equals(readFileSync(EXPECTED_RTK_LICENSE)),
     "installed RTK license does not match the pinned release license",
   );
+  verifyThirdPartyLicenses(join(resourceDir, "licenses", THIRD_PARTY_LICENSES));
   for (const [name, source] of Object.entries(LICENSE_SOURCES)) {
     const installed = join(resourceDir, "licenses", name);
     invariant(
@@ -628,7 +678,27 @@ async function main() {
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
-if (invokedPath === import.meta.url) {
+// Tells if Node started the module at moduleUrl as the main module. "main"
+// is import.meta.main, which older Node versions do not give. Node gives
+// import.meta.url as the real path of the file, so the fallback also compares
+// the real path of the started script. A start through a symlink thus runs
+// the checks.
+export function isMainModule(moduleUrl, main, startedPath = process.argv[1]) {
+  if (typeof main === "boolean") {
+    return main;
+  }
+  if (!startedPath) {
+    return false;
+  }
+  const started = [pathToFileURL(resolve(startedPath)).href];
+  try {
+    started.push(pathToFileURL(realpathSync(startedPath)).href);
+  } catch {
+    // The started path does not exist, so only the resolved path can match.
+  }
+  return started.includes(moduleUrl);
+}
+
+if (isMainModule(import.meta.url, import.meta.main)) {
   await main();
 }

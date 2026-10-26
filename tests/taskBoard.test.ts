@@ -486,5 +486,6 @@ test("routes without Halv Cloud leave the board list and name the reason", () =>
   const t = (key: string) => key;
   assert.equal(taskRouteReasonLabel("halv_cloud_required", t), "Needs Halv Cloud");
   assert.equal(taskRouteReasonLabel("sign_in_required", t), "Sign in needed");
+  assert.equal(taskRouteReasonLabel("brief_sharing_off", t), "Task briefs declined");
   assert.equal(taskRouteReasonLabel("difficulty", t), "difficulty");
 });

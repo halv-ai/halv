@@ -19,7 +19,7 @@ use crate::{
     auth::profiles,
     chat, exec, extensions, host_env,
     ponytail::PonytailMode,
-    preferences::PreferencesManager,
+    preferences::{AgentPreferences, BriefSharing, PreferencesManager},
     pricing::{self, PricingSource},
     savings::dollars::{self, PricedSavings, PromptRates, SavedTokens},
     sidecar::{
@@ -61,6 +61,10 @@ use adapter::{
 use probe_cache::{file_fingerprint, FileFingerprint, SharedCheck};
 
 const AGENT_SESSION_EVENT: &str = "agent-session-event";
+/// The main window listens for this event and shows the task brief card
+/// (ADR 0023). Rust launches, for example from the phone remote, have no
+/// IPC gate, so this event asks for them.
+const BRIEF_SHARING_NEEDED_EVENT: &str = "brief-sharing-needed";
 const DEFAULT_PERMISSION_MODE: &str = "ask";
 // RTK does not support the Codex or Kimi hook payloads.
 // Each session uses this guidance through its instruction channel.
@@ -3272,6 +3276,12 @@ impl AgentSessionManager {
     /// this app run (`SidecarManager::keep_for_restored_sessions`), also
     /// while the preference is off. `legacy_claude_subscription_proxy` is the
     /// stored subscription opt-in for rows from 1.0.0 or older.
+    ///
+    /// Limit: the session row does not hold the base URL of a Claude API key
+    /// session, so this call cannot register it (`register_upstream`). The
+    /// engine of this app run then does not admit a custom base URL host. A
+    /// restored pane that sends that host gets HTTP 400 until a new session
+    /// registers the host and the engine starts again.
     pub(crate) fn rehydrate_supervised(
         &self,
         app: &AppHandle,
@@ -5488,6 +5498,15 @@ struct SpawnedSurface {
     pid: u32,
 }
 
+/// True when a launch starts without routing only because the user did not
+/// answer the task brief question yet (ADR 0023). Only Claude and Codex
+/// panes route tasks.
+fn brief_sharing_question_needed(preferences: &AgentPreferences, agent_kind: AgentKind) -> bool {
+    preferences.task_routing
+        && preferences.brief_sharing == BriefSharing::Unset
+        && matches!(agent_kind, AgentKind::Claude | AgentKind::Codex)
+}
+
 struct SessionLauncher<'a> {
     app: &'a AppHandle,
     manager: &'a AgentSessionManager,
@@ -5526,10 +5545,15 @@ impl SessionLauncher<'_> {
         let ponytail_mode = self.preferences.ponytail()?;
         // The subscription lane uses the engine only when both switches are on.
         let claude_subscription_proxy = self.preferences.effective_claude_subscription_proxy()?;
-        let task_routing = self.preferences.task_routing()?;
+        // Routing sends task briefs to halv.ai. A launch routes only after
+        // the user allowed that once (ADR 0023). Until then, a launch with
+        // the switch on starts without routing.
+        let task_routing = self.preferences.effective_task_routing()?;
         let worker_lane = self.preferences.worker_lane()?;
         let tier_agents = self.preferences.routing_tier_agents()?;
-        let workflow_routing = self.preferences.workflow_routing()?;
+        let workflow_routing = self.preferences.effective_workflow_routing()?;
+        let ask_brief_sharing =
+            brief_sharing_question_needed(&self.preferences.get()?, req.agent_kind);
         let claude_ultracode = self.preferences.claude_ultracode()?;
         let permission_mode = match req.permission_mode_source {
             PermissionModeSource::Requested(permission_mode) => canonical_permission_mode(
@@ -5599,6 +5623,11 @@ impl SessionLauncher<'_> {
         reserve_session_slot(&self.manager.active_sessions)?;
         guard.mark_slot_reserved();
         let session_proxy = guard.session_proxy().clone();
+        if ask_brief_sharing {
+            // The main window asks only an account with Halv Cloud. A launch
+            // that the IPC gate already asked about changes nothing.
+            let _ = self.app.emit(BRIEF_SHARING_NEEDED_EVENT, ());
+        }
         Ok(PreparedLaunch {
             session_id,
             launch_spec,
@@ -6227,6 +6256,31 @@ fn spawn_ghostty_lifecycle(app: AppHandle, manager: AgentSessionManager, session
     });
 }
 
+/// The upstream URLs that the lanes send to the shared Halv Engine in
+/// `X-Headroom-Base-Url`, without the base URLs of single sessions. The
+/// engine puts their hosts in its allowlist when it starts.
+pub(crate) fn engine_upstream_urls() -> Vec<String> {
+    claude::engine_upstreams()
+}
+
+/// The `X-Headroom-Base-Url` upstream that only this session sends: the
+/// base URL of a Claude API key lane. Other lanes send only the upstreams of
+/// `engine_upstream_urls`.
+fn session_engine_upstream(lane: &SessionLane) -> Option<&str> {
+    match lane {
+        SessionLane::ClaudeApiKey { base_url, .. } => {
+            Some(claude::claude_api_key_upstream(base_url.as_deref()))
+        }
+        SessionLane::ClaudeSubscription
+        | SessionLane::CodexChatGpt { .. }
+        | SessionLane::ZaiGlm { .. }
+        | SessionLane::GrokApiKey { .. }
+        | SessionLane::KimiApiKey { .. }
+        | SessionLane::KimiSubscription
+        | SessionLane::Custom { .. } => None,
+    }
+}
+
 async fn session_proxy_context(
     agent_kind: AgentKind,
     lane: &SessionLane,
@@ -6280,7 +6334,22 @@ async fn session_proxy_context(
     if !requires_shared_proxy {
         return Ok(None);
     }
+    // The engine rejects an `X-Headroom-Base-Url` host that is not in the
+    // allowlist of its process. A new session base URL joins that list only
+    // at the next engine start (`SidecarManager::register_upstream`). Until
+    // then the lane goes direct, so its requests never get an HTTP 400.
+    let session_upstream = session_engine_upstream(lane);
+    if let Some(upstream) = session_upstream {
+        sidecar.register_upstream(upstream);
+    }
     let port = shared_proxy_port_from_status(agent_kind, sidecar.ensure_ready().await)?;
+    if session_upstream.is_some_and(|upstream| !sidecar.admits_upstream(upstream)) {
+        eprintln!(
+            "The Halv Engine does not accept the base URL of this session yet; \
+             the session goes direct until the next engine start"
+        );
+        return Ok(Some(SessionProxyContext::direct()));
+    }
     Ok(Some(SessionProxyContext {
         sidecar: Some(sidecar.clone()),
         port: Some(port),
@@ -6398,6 +6467,47 @@ mod tests {
 
     struct FakeAdapter;
     static FAKE_ADAPTER: FakeAdapter = FakeAdapter;
+
+    #[test]
+    fn a_launch_asks_the_brief_question_only_while_the_answer_is_unset() {
+        let preferences = |task_routing, brief_sharing| AgentPreferences {
+            task_routing,
+            brief_sharing,
+            ..AgentPreferences::default()
+        };
+        assert!(brief_sharing_question_needed(
+            &preferences(true, BriefSharing::Unset),
+            AgentKind::Claude
+        ));
+        assert!(brief_sharing_question_needed(
+            &preferences(true, BriefSharing::Unset),
+            AgentKind::Codex
+        ));
+        // Other agents do not route tasks.
+        for agent_kind in [
+            AgentKind::Antigravity,
+            AgentKind::Gemini,
+            AgentKind::Grok,
+            AgentKind::Kimi,
+            AgentKind::Zai,
+        ] {
+            assert!(!brief_sharing_question_needed(
+                &preferences(true, BriefSharing::Unset),
+                agent_kind
+            ));
+        }
+        // An answer or the routing switch off stops the question.
+        for (task_routing, brief_sharing) in [
+            (true, BriefSharing::Allowed),
+            (true, BriefSharing::Declined),
+            (false, BriefSharing::Unset),
+        ] {
+            assert!(!brief_sharing_question_needed(
+                &preferences(task_routing, brief_sharing),
+                AgentKind::Claude
+            ));
+        }
+    }
 
     #[test]
     fn embedded_terminal_close_classifies_live_and_missing_sessions() {
@@ -9350,6 +9460,45 @@ mod tests {
         assert_eq!(paths.rtk, legacy_rtk);
         assert_eq!(paths.crux, legacy_crux);
         let _ = std::fs::remove_dir_all(legacy_directory);
+    }
+
+    #[test]
+    fn only_a_claude_api_key_session_has_its_own_engine_upstream() {
+        let api_key = || SessionCredential::ApiKey {
+            api_key: "test-key".to_string(),
+        };
+        let api_key_lane = |base_url: Option<&str>| SessionLane::ClaudeApiKey {
+            credential: api_key(),
+            base_url: base_url.map(str::to_string),
+        };
+        assert_eq!(
+            session_engine_upstream(&api_key_lane(None)),
+            Some("https://api.anthropic.com")
+        );
+        assert_eq!(
+            session_engine_upstream(&api_key_lane(Some(" http://localhost:4000 "))),
+            Some("http://localhost:4000")
+        );
+        for lane in [
+            SessionLane::ClaudeSubscription,
+            SessionLane::CodexChatGpt { proxied: true },
+            SessionLane::ZaiGlm {
+                credential: api_key(),
+                model_overrides: None,
+            },
+            SessionLane::GrokApiKey {
+                credential: api_key(),
+                model_overrides: None,
+            },
+            SessionLane::KimiSubscription,
+            SessionLane::Custom { env: Vec::new() },
+        ] {
+            assert_eq!(session_engine_upstream(&lane), None);
+        }
+        // The default upstream of the API key lane is always in the list.
+        assert!(engine_upstream_urls()
+            .iter()
+            .any(|upstream| upstream == "https://api.anthropic.com"));
     }
 
     #[test]

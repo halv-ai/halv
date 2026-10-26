@@ -207,7 +207,11 @@ SOFTWARE.
 - License: MIT
 - Copyright (c) 2026 Pedro Villaca
 
-The macOS app bundles the Crux binary.
+The installers bundle the Crux v0.12.0 binary.
+The binary statically links the Rust crates that Crux depends on, under their
+own licenses.
+`licenses/THIRD_PARTY_LICENSES.md` does not list these crates.
+The `Cargo.lock` file in the Crux v0.12.0 source lists them.
 
 ```
 MIT License
@@ -241,6 +245,13 @@ SOFTWARE.
 
 The app bundles the RTK 0.42.4 binary.
 `src-tauri/resources/licenses/rtk-0.42.4-LICENSE` contains the license text.
+The binary statically links the Rust crates that RTK depends on, under their
+own licenses. It also contains a bundled copy of SQLite, which is in the
+public domain.
+The x86_64 Linux binary is a static musl build. It also contains musl libc
+code, under the MIT license.
+`licenses/THIRD_PARTY_LICENSES.md` does not list these crates.
+The `Cargo.lock` file in the RTK 0.42.4 source lists them.
 
 ## Headroom
 
@@ -256,7 +267,19 @@ The runtime data folder contains the Headroom `LICENSE` and `NOTICE` files in
 The app uses Rust crates, npm packages, and Python packages under their own
 licenses. These licenses include MIT, Apache-2.0, BSD, ISC, Unicode-3.0,
 MPL-2.0, CDLA-Permissive-2.0, PSF, Zlib, 0BSD, CC0, Artistic-2.0, and WTFPL.
-`src-tauri/Cargo.lock` lists the Rust crates. `pnpm-lock.yaml` lists the npm
-packages. `scripts/headroom-runtime.lock.json` pins the Headroom fork, and its
+`src-tauri/Cargo.lock` and `src-tauri/supervisor/Cargo.lock` list the Rust
+crates. `pnpm-lock.yaml` lists the npm packages.
+`scripts/headroom-runtime.lock.json` pins the Headroom fork, and its
 `uv.lock` lists the Python packages. The Headroom runtime directory contains
 the package metadata of its main Python packages, with their license files.
+
+`licenses/THIRD_PARTY_LICENSES.md` in the app bundle gives the license text of
+each Rust crate and npm package that the Halv app contains. The Rust crates
+include those of the `halv-supervisor` sidecar. The file also gives the
+license texts of native code that some crates compile or link into the app,
+for example libdbus on Linux and the Microsoft WebView2 loader on Windows.
+The file does not list the Rust crates that the RTK and Crux binaries link.
+The RTK and Crux sections above tell where to find them.
+`scripts/collect-third-party-licenses.mjs` makes that file from the lock files.
+Run `pnpm licenses:collect` after a dependency change.
+`pnpm check:third-party-licenses` fails when the file is not current.

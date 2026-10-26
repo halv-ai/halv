@@ -215,15 +215,36 @@ test("release workflow keeps updater signing enabled and uses the tested builder
   const publishIndex = workflow.indexOf(
     'gh api --method PATCH "$release_endpoint" -F draft=false --silent',
   );
-  const hideOlderIndex = workflow.indexOf("- name: Hide older public releases");
+  const legacyIndex = workflow.indexOf(
+    "- name: Publish latest.json for Halv 1.0.0 and older",
+  );
   const refreshWebsiteIndex = workflow.indexOf(
     "- name: Refresh website release metadata",
   );
   assert.ok(publishIndex >= 0);
-  assert.ok(hideOlderIndex > publishIndex);
-  assert.ok(refreshWebsiteIndex > hideOlderIndex);
-  assert.match(workflow, /select\(\.draft == false\) \| \.id/);
-  assert.match(workflow, /-F draft=true --silent/);
+  assert.ok(legacyIndex > publishIndex);
+  assert.ok(refreshWebsiteIndex > legacyIndex);
+  // Older releases stay public in both repositories.
+  assert.doesNotMatch(workflow, /-F draft=true/);
+  assert.doesNotMatch(workflow, /Hide older public releases/);
+  assert.match(workflow, /^  RELEASE_REPOSITORY: \$\{\{ github\.repository \}\}$/m);
+  assert.match(workflow, /^  LEGACY_RELEASE_REPOSITORY: pedr0v\/halv-releases$/m);
+  assert.doesNotMatch(workflow, /owner: pedr0v/);
+  // The release re-checks the latest mark after publication.
+  const latestIndex = workflow.indexOf(
+    "- name: Make sure that this release is the latest one",
+  );
+  assert.ok(latestIndex > publishIndex);
+  assert.ok(legacyIndex > latestIndex);
+  // The SBOM tool gets no token and runs after the keychain is gone.
+  const sbomUses = workflow.match(/uses: anchore\/sbom-action@[0-9a-f]{40}/g) ?? [];
+  const emptyTokens = workflow.match(/^          github-token: ""$/gm) ?? [];
+  assert.ok(sbomUses.length >= 2);
+  assert.equal(emptyTokens.length, sbomUses.length);
+  assert.ok(
+    workflow.indexOf("- name: Remove temporary Apple signing keychain") <
+      workflow.indexOf("- name: Generate Headroom runtime SBOM"),
+  );
   assert.match(workflow, /event_type: "halv-release-published"/);
   assert.match(workflow, /repos\/\$WEBSITE_REPOSITORY\/dispatches/);
   const websiteStep = workflow.slice(refreshWebsiteIndex);

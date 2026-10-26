@@ -992,6 +992,11 @@ struct SidecarInner {
     restored_sessions: AtomicBool,
     /// `startup` spawned the supervisor loop. It spawns only one loop.
     supervisor_started: AtomicBool,
+    /// The base URLs of single sessions (`register_upstream`). The next
+    /// engine start puts their hosts in `HEADROOM_ALLOWED_BASE_URLS`.
+    session_upstreams: Mutex<Vec<String>>,
+    /// The `HEADROOM_ALLOWED_BASE_URLS` hosts of the last spawned child.
+    child_allowed_hosts: RwLock<Vec<String>>,
 }
 
 /// Receives a proxy failure: the `proxy_failed` category and true when the
@@ -1071,6 +1076,8 @@ impl SidecarManager {
                 enabled: AtomicBool::new(true),
                 restored_sessions: AtomicBool::new(false),
                 supervisor_started: AtomicBool::new(false),
+                session_upstreams: Mutex::new(Vec::new()),
+                child_allowed_hosts: RwLock::new(Vec::new()),
             }),
         }
     }
@@ -2298,7 +2305,8 @@ impl SidecarManager {
     }
 
     fn spawn_headroom_proxy(&self, binary_path: &Path, port: u16) -> Result<ManagedChild, String> {
-        spawn_headroom_proxy_with_log_limit(
+        let allowed_hosts = self.engine_allowed_hosts();
+        let child = spawn_headroom_proxy_with_log_limit(
             binary_path,
             port,
             Arc::clone(&self.inner.stderr_lines),
@@ -2307,7 +2315,63 @@ impl SidecarManager {
             HEADROOM_PROXY_LOG_MAX_BYTES,
             self.optimization_paused(),
             self.inner.upstream.as_ref(),
-        )
+            &allowed_hosts.join(","),
+        )?;
+        *self
+            .inner
+            .child_allowed_hosts
+            .write()
+            .expect("child allowed hosts lock poisoned") = allowed_hosts;
+        Ok(child)
+    }
+
+    /// The allowlist hosts for the next child: the loopback hosts, the
+    /// upstreams of the lanes, and the base URLs of single sessions.
+    fn engine_allowed_hosts(&self) -> Vec<String> {
+        let mut upstreams = crate::agent_sessions::engine_upstream_urls();
+        upstreams.extend(
+            self.inner
+                .session_upstreams
+                .lock()
+                .expect("session upstreams lock poisoned")
+                .iter()
+                .cloned(),
+        );
+        headroom_allowed_hosts(upstreams.iter().map(String::as_str))
+    }
+
+    /// Adds the base URL of a session to the allowlist of the next engine
+    /// start.
+    ///
+    /// Limit: Halv does not restart a running engine for a new host. A
+    /// restart drops the requests in flight of all other sessions and closes
+    /// their Codex WebSockets. The host applies at the next engine start in
+    /// this app run: a manual restart or an automatic restart after an exit.
+    /// The list lives only in memory, so the next app launch does not hold
+    /// the host. Until then, `admits_upstream` is false and the session goes
+    /// direct.
+    pub(crate) fn register_upstream(&self, upstream: &str) {
+        let mut upstreams = self
+            .inner
+            .session_upstreams
+            .lock()
+            .expect("session upstreams lock poisoned");
+        if !upstreams.iter().any(|known| known == upstream) {
+            upstreams.push(upstream.to_string());
+        }
+    }
+
+    /// True when the allowlist of the last spawned child holds the host of
+    /// `upstream`. Call it after `ensure_ready` gave a running engine.
+    pub(crate) fn admits_upstream(&self, upstream: &str) -> bool {
+        let Some(host) = headroom_allowlist_host(upstream) else {
+            return false;
+        };
+        self.inner
+            .child_allowed_hosts
+            .read()
+            .expect("child allowed hosts lock poisoned")
+            .contains(&host)
     }
 
     fn kill_child(&self) {
@@ -3605,6 +3669,7 @@ fn spawn_headroom_proxy_with_log_limit(
     log_max_bytes: u64,
     optimization_paused: bool,
     upstream: Option<&SidecarUpstream>,
+    allowed_base_urls: &str,
 ) -> Result<ManagedChild, String> {
     let generation = stderr_generation
         .fetch_add(1, Ordering::SeqCst)
@@ -3635,6 +3700,7 @@ fn spawn_headroom_proxy_with_log_limit(
         initial_app_data_dir.as_deref(),
         optimization_paused,
         upstream,
+        allowed_base_urls,
     )
     .spawn()
     .map_err(|error| error.to_string())?;
@@ -3683,12 +3749,117 @@ const HEADROOM_PRIVACY_ENV: [(&str, &str); 3] = [
     ("HEADROOM_UPDATE_CHECK", "off"),
 ];
 
+/// The malloc variables of the proxy on macOS. Upstream Headroom sets them
+/// with a re-exec as `python -m headroom.cli`, which a frozen runtime cannot
+/// do. macOS reads them only at process start, so Halv sets them at spawn.
+const HEADROOM_MACOS_MALLOC_ENV: [(&str, &str); 2] =
+    [("MallocAggressiveMadvise", "1"), ("MallocLargeCache", "0")];
+
+/// The upstream hosts that the proxy accepts in an `X-Headroom-Base-Url`
+/// header. See `headroom_allowed_hosts`.
+const HEADROOM_ALLOWED_BASE_URLS_ENV: &str = "HEADROOM_ALLOWED_BASE_URLS";
+
+/// The proxy always accepts these hosts, so a lane can use a local gateway.
+/// An IPv6 host needs brackets, because Headroom ignores a bare `::1`.
+const HEADROOM_LOOPBACK_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
+
+/// Only `headroom wrap` sets this marker. With it, the orphan watchdog of
+/// Headroom can stop the proxy, so the managed proxy never inherits it.
+const HEADROOM_WRAP_OWNED_ENV: &str = "HEADROOM_WRAP_OWNED";
+
+/// The fixed variables of the proxy: the privacy variables on each OS, and
+/// the malloc variables on macOS only.
+fn headroom_runtime_env(macos: bool) -> Vec<(&'static str, &'static str)> {
+    let mut env = HEADROOM_PRIVACY_ENV.to_vec();
+    if macos {
+        env.extend(HEADROOM_MACOS_MALLOC_ENV);
+    }
+    env
+}
+
+/// The `HEADROOM_ALLOWED_BASE_URLS` hosts: the loopback hosts, then the host
+/// of each upstream URL, each host once.
+///
+/// A set allowlist puts the SSRF guard of Headroom in allow-only mode. The
+/// proxy then rejects with HTTP 400 each `X-Headroom-Base-Url` host that is
+/// not in the list, public hosts too. Thus the list must hold the host of
+/// each upstream that a lane sends. A bare host admits each port of that
+/// host. The guard does not resolve a listed host, so a listed host can also
+/// go through an HTTP proxy of the user.
+fn headroom_allowed_hosts<'a>(upstreams: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut hosts = HEADROOM_LOOPBACK_HOSTS.map(str::to_string).to_vec();
+    for host in upstreams.into_iter().filter_map(headroom_allowlist_host) {
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
+/// The allowlist entry for an upstream URL: the host as Headroom reads it
+/// with `urllib.parse`. The host is in lower case, without user information
+/// and port. An IPv6 host keeps its brackets. Halv does not normalize the
+/// host, because Headroom compares the raw text. The result is `None` when
+/// the guard rejects the URL anyway: no http or https scheme, or no host.
+///
+/// The result is also `None` for a host that `urllib.parse` cannot read.
+/// Headroom parses each list entry for each request, so one bad entry gives
+/// HTTP 500 on all lanes. Thus a bracketed host must be an IPv6 address
+/// without a zone ID. Each other host holds only ASCII letters, digits, `.`,
+/// `-` and `_`. The authority holds no other bracket and no non-ASCII
+/// character, because Python rejects them in the user information too.
+fn headroom_allowlist_host(upstream: &str) -> Option<String> {
+    let (scheme, rest) = upstream.trim().split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if !authority.is_ascii() {
+        return None;
+    }
+    let (user_info, host_and_port) = authority.rsplit_once('@').unwrap_or(("", authority));
+    if user_info.contains(['[', ']']) {
+        return None;
+    }
+    let host = match host_and_port.strip_prefix('[') {
+        Some(bracketed) => {
+            let (address, port) = bracketed.split_once(']')?;
+            // Only a port can follow the bracket. Python rejects other text.
+            let port_is_valid = port.is_empty()
+                || port
+                    .strip_prefix(':')
+                    .is_some_and(|digits| digits.bytes().all(|byte| byte.is_ascii_digit()));
+            // The parse rejects a zone ID (`%`) and an IPv4 address.
+            if !port_is_valid || address.parse::<std::net::Ipv6Addr>().is_err() {
+                return None;
+            }
+            format!("[{address}]")
+        }
+        None => {
+            if host_and_port.contains(['[', ']']) {
+                return None;
+            }
+            let host = host_and_port.split(':').next().unwrap_or_default();
+            let usable = !host.is_empty()
+                && host.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+                });
+            if !usable {
+                return None;
+            }
+            host.to_string()
+        }
+    };
+    Some(host.to_ascii_lowercase())
+}
+
 fn headroom_proxy_command(
     binary_path: &Path,
     port: u16,
     app_data_dir: Option<&Path>,
     optimization_paused: bool,
     upstream: Option<&SidecarUpstream>,
+    allowed_base_urls: &str,
 ) -> Command {
     let mut command = Command::new(binary_path);
     crate::process::hide_console(&mut command);
@@ -3715,7 +3886,11 @@ fn headroom_proxy_command(
         .env("RTK_TELEMETRY_DISABLED", "1")
         // Halv sends no usage data without consent (ADR 0021), so the proxy
         // never uploads its own telemetry or checks for updates.
-        .envs(HEADROOM_PRIVACY_ENV.iter().copied())
+        .envs(headroom_runtime_env(cfg!(target_os = "macos")))
+        // The process keeps this list until it exits. A new session base URL
+        // applies at the next start (`SidecarManager::register_upstream`).
+        .env(HEADROOM_ALLOWED_BASE_URLS_ENV, allowed_base_urls)
+        .env_remove(HEADROOM_WRAP_OWNED_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -3899,6 +4074,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     const CAPTURED_STATS: &str = include_str!("../../tests/fixtures/headroom_stats.json");
+    const TEST_ALLOWED_BASE_URLS: &str = "localhost,127.0.0.1,[::1],api.anthropic.com";
 
     fn running_status(spawned_by_us: bool, managed_by_halv: bool, port: u16) -> SidecarStatus {
         SidecarStatus::Running {
@@ -3957,6 +4133,7 @@ mod tests {
             Some(Path::new("app-data")),
             false,
             None,
+            TEST_ALLOWED_BASE_URLS,
         );
         let env_value = |key: &str| {
             command
@@ -3970,6 +4147,220 @@ mod tests {
     }
 
     #[test]
+    fn managed_proxy_command_sets_the_allowlist_and_the_host_malloc_variables() {
+        let command = headroom_proxy_command(
+            Path::new("headroom"),
+            DEFAULT_PORT,
+            None,
+            false,
+            None,
+            TEST_ALLOWED_BASE_URLS,
+        );
+        let envs = command.get_envs().collect::<Vec<_>>();
+        let env_entry = |key: &str| {
+            envs.iter()
+                .find(|(name, _)| *name == OsStr::new(key))
+                .map(|(_, value)| *value)
+        };
+        assert_eq!(
+            env_entry(HEADROOM_ALLOWED_BASE_URLS_ENV),
+            Some(Some(OsStr::new(TEST_ALLOWED_BASE_URLS)))
+        );
+        // A removed variable has no value, so the child never inherits it.
+        assert_eq!(env_entry(HEADROOM_WRAP_OWNED_ENV), Some(None));
+        let macos = cfg!(target_os = "macos");
+        assert_eq!(
+            env_entry("MallocAggressiveMadvise"),
+            macos.then_some(Some(OsStr::new("1")))
+        );
+        assert_eq!(
+            env_entry("MallocLargeCache"),
+            macos.then_some(Some(OsStr::new("0")))
+        );
+    }
+
+    #[test]
+    fn runtime_env_adds_the_malloc_variables_only_on_macos() {
+        let macos = headroom_runtime_env(true);
+        let other = headroom_runtime_env(false);
+        for privacy in HEADROOM_PRIVACY_ENV {
+            assert!(macos.contains(&privacy));
+            assert!(other.contains(&privacy));
+        }
+        assert!(macos.contains(&("MallocAggressiveMadvise", "1")));
+        assert!(macos.contains(&("MallocLargeCache", "0")));
+        assert_eq!(macos.len(), HEADROOM_PRIVACY_ENV.len() + 2);
+        assert!(!other.iter().any(|(name, _)| name.starts_with("Malloc")));
+        assert_eq!(other.len(), HEADROOM_PRIVACY_ENV.len());
+    }
+
+    #[test]
+    fn allowed_hosts_list_loopback_then_each_lane_host_once() {
+        let hosts = headroom_allowed_hosts([
+            "https://api.anthropic.com",
+            " https://API.Anthropic.com/v1 ",
+            "https://api.z.ai/api/anthropic",
+            "https://api.x.ai",
+            "http://LOCALHOST:4000/anthropic",
+            "http://127.0.0.1:8080",
+            "http://[::1]:9000/v1",
+            "https://user@gateway.lan:8443/v1?team=a#top",
+            "http://10.0.0.5",
+            "http://[FD00::1]:8080",
+        ]);
+        assert_eq!(
+            hosts,
+            [
+                "localhost",
+                "127.0.0.1",
+                "[::1]",
+                "api.anthropic.com",
+                "api.z.ai",
+                "api.x.ai",
+                "gateway.lan",
+                "10.0.0.5",
+                "[fd00::1]",
+            ]
+        );
+        assert_eq!(
+            hosts.join(","),
+            "localhost,127.0.0.1,[::1],api.anthropic.com,api.z.ai,api.x.ai,gateway.lan,10.0.0.5,[fd00::1]"
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_skip_urls_that_the_guard_rejects_or_that_break_the_list() {
+        for upstream in [
+            "",
+            "   ",
+            "api.anthropic.com",
+            "localhost:4000",
+            "ftp://files.example",
+            "ws://socket.example",
+            "http://",
+            "http:///v1",
+            "http://[]:80",
+            "http://[::1",
+            "http://a,b.example",
+            "http://user@:8080",
+        ] {
+            assert_eq!(headroom_allowlist_host(upstream), None, "{upstream:?}");
+        }
+        assert_eq!(
+            headroom_allowed_hosts(["http://a,b.example", "not a url"]),
+            HEADROOM_LOOPBACK_HOSTS
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_skip_hosts_that_python_cannot_parse() {
+        // Each of these hosts makes `urllib.parse` raise `ValueError`, or
+        // holds a character that Halv does not admit in a host.
+        for upstream in [
+            "http://[abc]:80",
+            "http://[1.2.3.4]",
+            "http://[fe80::1%25en0]/",
+            "http://[fe80::1%en0]/",
+            "http://a]b/v1",
+            "http://x[y]z",
+            "http://[::1]]:80",
+            "http://[::1]:8[0",
+            "http://[fd00::1]x/v1",
+            "http://[fd00::1]%",
+            "http://[fd00::1]:80x",
+            "http://us[er@gateway.lan",
+            "http://us]er@[::1]",
+            "https://ex\u{ff0f}ample.com",
+            "https://us\u{ff0f}er@gateway.lan",
+            "https://caf\u{e9}.example",
+            "https://gateway.lan\u{ff1a}443",
+            "http://a b.example",
+            "http://a%2eb.example",
+            "http://a\\b.example",
+        ] {
+            assert_eq!(headroom_allowlist_host(upstream), None, "{upstream:?}");
+        }
+        assert_eq!(
+            headroom_allowed_hosts([
+                "http://[abc]:80",
+                "https://ex\u{ff0f}ample.com",
+                "https://api.anthropic.com",
+            ]),
+            ["localhost", "127.0.0.1", "[::1]", "api.anthropic.com"]
+        );
+        assert_eq!(
+            headroom_allowlist_host("http://[::FFFF:1.2.3.4]:80/v1").as_deref(),
+            Some("[::ffff:1.2.3.4]")
+        );
+        assert_eq!(
+            headroom_allowlist_host("https://My_Gateway-1.lan/v1").as_deref(),
+            Some("my_gateway-1.lan")
+        );
+    }
+
+    #[test]
+    fn a_bad_session_upstream_sends_only_its_own_session_direct() {
+        let manager = SidecarManager::new(DEFAULT_PORT);
+        let bad_upstream = "http://[abc]:80/anthropic";
+        manager.register_upstream(bad_upstream);
+        manager.register_upstream("http://gateway.lan:4000");
+        let hosts = manager.engine_allowed_hosts();
+        assert!(hosts.contains(&"gateway.lan".to_string()));
+        assert!(!hosts.iter().any(|host| host.contains("abc")));
+        *manager
+            .inner
+            .child_allowed_hosts
+            .write()
+            .expect("child allowed hosts lock poisoned") = hosts;
+        assert!(!manager.admits_upstream(bad_upstream));
+        assert!(manager.admits_upstream("http://gateway.lan:4000"));
+        assert!(manager.admits_upstream("https://api.anthropic.com"));
+        assert!(manager.admits_upstream("https://api.z.ai/api/anthropic"));
+    }
+
+    #[test]
+    fn a_session_upstream_applies_at_the_next_engine_start() {
+        let manager = SidecarManager::new(DEFAULT_PORT);
+        let upstream = "http://gateway.lan:4000/anthropic";
+
+        // No child: nothing is admitted, the built-in upstreams included.
+        assert!(!manager.admits_upstream("https://api.anthropic.com"));
+        assert!(!manager
+            .engine_allowed_hosts()
+            .contains(&"gateway.lan".to_string()));
+
+        manager.register_upstream(upstream);
+        manager.register_upstream(upstream);
+        assert_eq!(
+            manager
+                .inner
+                .session_upstreams
+                .lock()
+                .expect("session upstreams lock poisoned")
+                .len(),
+            1
+        );
+        let next_hosts = manager.engine_allowed_hosts();
+        assert!(next_hosts.contains(&"gateway.lan".to_string()));
+        assert!(next_hosts.contains(&"api.anthropic.com".to_string()));
+        assert!(next_hosts.contains(&"api.z.ai".to_string()));
+        assert!(next_hosts.contains(&"api.x.ai".to_string()));
+        // The running child keeps the list of its spawn.
+        assert!(!manager.admits_upstream(upstream));
+
+        *manager
+            .inner
+            .child_allowed_hosts
+            .write()
+            .expect("child allowed hosts lock poisoned") = next_hosts;
+        assert!(manager.admits_upstream(upstream));
+        assert!(manager.admits_upstream("http://GATEWAY.lan:9999/other"));
+        assert!(manager.admits_upstream("https://api.anthropic.com"));
+        assert!(!manager.admits_upstream("http://other.lan"));
+        assert!(!manager.admits_upstream("not a url"));
+    }
+
+    #[test]
     fn managed_proxy_command_sets_managed_sidecar_marker() {
         let app_data_dir = PathBuf::from("app-data");
         let command = headroom_proxy_command(
@@ -3978,6 +4369,7 @@ mod tests {
             Some(&app_data_dir),
             false,
             None,
+            TEST_ALLOWED_BASE_URLS,
         );
         let marker_value = command.get_envs().find_map(|(name, value)| {
             (name == OsStr::new(HALV_MANAGED_SIDECAR_ENV))
@@ -4091,6 +4483,7 @@ mod tests {
             None,
             false,
             Some(&upstream),
+            TEST_ALLOWED_BASE_URLS,
         );
         let upstream_value = command.get_envs().find_map(|(name, value)| {
             (name == OsStr::new("OPENAI_TARGET_API_URL"))
@@ -4109,7 +4502,14 @@ mod tests {
 
     #[test]
     fn paused_proxy_command_disables_optimization() {
-        let command = headroom_proxy_command(Path::new("headroom"), DEFAULT_PORT, None, true, None);
+        let command = headroom_proxy_command(
+            Path::new("headroom"),
+            DEFAULT_PORT,
+            None,
+            true,
+            None,
+            TEST_ALLOWED_BASE_URLS,
+        );
         let arguments = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -4380,7 +4780,7 @@ mod tests {
 
     #[test]
     fn pinned_headroom_version_comes_from_the_immutable_bundle_lock() {
-        assert_eq!(pinned_headroom_version(), "0.35.0-dev+halv.g1dc3f3a0c0f3");
+        assert_eq!(pinned_headroom_version(), "0.42.0-dev+halv.g284912cf4f65");
     }
 
     #[test]
@@ -4631,6 +5031,13 @@ mod tests {
         assert!(sidecar_stats.cost_saved_usd > 0.0);
         assert!(sidecar_stats.requests_total > 0);
         assert!(sidecar_stats.process_input_tokens > 0);
+        // The fork rollup per project, with cache reads, from the frozen
+        // 0.42 runtime: three Codex turns on the `demo-app` project.
+        assert_eq!(
+            stats.project_savings_snapshot("demo-app"),
+            (3, 12_082, 12_000)
+        );
+        assert_eq!(stats.project_tokens_saved("demo-site"), 172);
     }
 
     #[test]
@@ -4854,15 +5261,16 @@ mod tests {
             .expect("fixture should include lifetime USD savings");
         let expected_cost = global_cost * (agent_tokens as f64 / global_tokens as f64);
 
-        assert_eq!(agent_tokens, 24_000);
-        assert_eq!(agent_requests, 12);
+        assert_eq!(agent_tokens, 12_082);
+        assert_eq!(agent_requests, 3);
+        assert_eq!(global_tokens, 12_254);
         assert_eq!(sidecar_stats.lifetime_tokens_saved, Some(global_tokens));
         assert_eq!(sidecar_stats.lifetime_cost_saved_usd, Some(global_cost));
         assert_eq!(sidecar_stats.tokens_saved, agent_tokens);
         assert_eq!(sidecar_stats.requests_total, agent_requests);
         assert_f64_close(sidecar_stats.cost_saved_usd, expected_cost);
-        assert_eq!(sidecar_stats.session_tokens_saved, 464_887);
-        assert_f64_close(sidecar_stats.session_cost_saved_usd, 4.386_785);
+        assert_eq!(sidecar_stats.session_tokens_saved, 12_254);
+        assert_f64_close(sidecar_stats.session_cost_saved_usd, 0.060_926);
     }
 
     #[test]
@@ -4871,9 +5279,9 @@ mod tests {
         let sidecar_stats = stats.to_sidecar_stats(DEFAULT_PORT, 0, &HashMap::new());
 
         assert!(stats.agent_usage.is_none());
-        assert_eq!(sidecar_stats.tokens_saved, 464_887);
-        assert_eq!(sidecar_stats.requests_total, 653);
-        assert_f64_close(sidecar_stats.cost_saved_usd, 4.386_785);
+        assert_eq!(sidecar_stats.tokens_saved, 12_254);
+        assert_eq!(sidecar_stats.requests_total, 7);
+        assert_f64_close(sidecar_stats.cost_saved_usd, 0.060_926);
     }
 
     #[test]
@@ -4891,9 +5299,9 @@ mod tests {
         assert_eq!(stats.halv_agent_savings(), None);
 
         let sidecar_stats = stats.to_sidecar_stats(DEFAULT_PORT, 0, &HashMap::new());
-        assert_eq!(sidecar_stats.compression_tokens_saved, 464_887);
-        assert_eq!(sidecar_stats.tokens_saved, 464_887);
-        assert_f64_close(sidecar_stats.cost_saved_usd, 4.386_785);
+        assert_eq!(sidecar_stats.compression_tokens_saved, 12_254);
+        assert_eq!(sidecar_stats.tokens_saved, 12_254);
+        assert_f64_close(sidecar_stats.cost_saved_usd, 0.060_926);
     }
 
     #[test]

@@ -14,6 +14,11 @@ The repository uses one branch: `main`.
 The maintainer merges approved pull requests into `main`.
 The repository has no release branches.
 
+The maintainer develops Halv in a private repository.
+The private repository also holds the account server, the relay, and the phone app.
+`scripts/export-public.mjs` copies the public part of the private repository into this repository.
+The maintainer also applies each merged pull request to the private repository, so that the next export keeps it.
+
 ## Before you open a pull request
 
 Run the tests:

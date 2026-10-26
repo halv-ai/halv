@@ -670,14 +670,13 @@ mod tests {
     fn the_server_serves_the_same_price_table() {
         // The server image builds from server/ only, so it keeps a copy.
         // The public repository has no server/ directory, so the test skips there.
-        let server_copy =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../server/src/prices.json");
-        if !server_copy.exists() {
-            eprintln!("skip: server/src/prices.json does not exist in this tree");
+        let server_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../server");
+        if !server_dir.is_dir() {
+            eprintln!("skip: this tree has no server/ directory");
             return;
         }
-        let server_copy = std::fs::read_to_string(server_copy)
-            .expect("server/src/prices.json should be readable");
+        let server_copy = std::fs::read_to_string(server_dir.join("src/prices.json"))
+            .expect("server/src/prices.json should exist");
         assert_eq!(
             server_copy, EMBEDDED_PRICES,
             "copy src-tauri/src/pricing/prices.json to server/src/prices.json"

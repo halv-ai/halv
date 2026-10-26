@@ -1,0 +1,4 @@
+{
+  "$comment": "scripts/collect-third-party-licenses.mjs reads this file. Each entry names a package that has no license file and no license expression with a standard text in scripts/license-texts/. Each entry must give the reason that the installers can ship the package without its license text. The collector fails for an entry that no longer matches such a package. Entry shape: { \"ecosystem\": \"cargo\" or \"npm\", \"name\": \"...\", \"version\": \"...\", \"reason\": \"...\" }.",
+  "exceptions": []
+}

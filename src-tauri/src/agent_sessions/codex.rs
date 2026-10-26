@@ -1261,6 +1261,8 @@ fn invocation_args(
         routing.conversation_id,
         routing.worker_lane,
         routing.tier_agents.clone(),
+        // Without routing, the server lists no routing tool (ADR 0023).
+        routing.enabled,
         false,
     )?;
     let savings_command = serde_json::to_string(&savings.command)
@@ -3453,6 +3455,10 @@ mod tests {
             assert!(routed_args.windows(2).any(|pair| pair == ["-c", setting]));
         }
 
+        assert!(!routed_args
+            .iter()
+            .any(|argument| argument.contains("--task-routing")));
+
         let plain_args = launch_args(false);
         assert!(!plain_args
             .iter()
@@ -3460,5 +3466,15 @@ mod tests {
         for setting in ["multi_agent", "max_depth", "max_threads"] {
             assert!(!plain_args.iter().any(|argument| argument.contains(setting)));
         }
+        // Without routing, the savings server lists no routing tool
+        // (ADR 0023). The savings tools stay.
+        let savings_args = plain_args
+            .iter()
+            .find(|argument| argument.starts_with("mcp_servers.halv-savings.args="))
+            .expect("the savings server arguments should exist");
+        assert!(
+            savings_args.contains(r#""--task-routing","off""#),
+            "{savings_args}"
+        );
     }
 }

@@ -922,6 +922,8 @@ fn agent_mcp_config(
         routing.conversation_id,
         routing.worker_lane,
         routing.tier_agents.clone(),
+        // Without routing, the server lists no routing tool (ADR 0023).
+        routing.enabled,
         routing.workflow_routing,
     )?;
     let mut servers = serde_json::Map::new();
@@ -1270,11 +1272,7 @@ fn apply_lane_environment(
                 let port = proxy_port.ok_or_else(|| {
                     "the Claude subscription lane requires a managed Headroom proxy".to_string()
                 })?;
-                let upstream = env::var("ANTHROPIC_BASE_URL")
-                    .ok()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or_else(|| ANTHROPIC_DEFAULT_BASE_URL.to_string());
+                let upstream = claude_subscription_upstream();
                 command
                     .env(
                         "ANTHROPIC_BASE_URL",
@@ -1295,11 +1293,7 @@ fn apply_lane_environment(
             if api_key.is_empty() {
                 return Err("the Claude API key cannot be empty".to_string());
             }
-            let upstream = base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or(ANTHROPIC_DEFAULT_BASE_URL);
+            let upstream = claude_api_key_upstream(base_url.as_deref());
             command.env("ANTHROPIC_API_KEY", api_key);
             apply_anthropic_route(command, proxy_port, project, upstream);
         }
@@ -1410,6 +1404,37 @@ fn apply_lane_environment(
         command.env("CODEX_HOME", codex_home);
     }
     Ok(())
+}
+
+/// The upstream of the Claude subscription lane: `ANTHROPIC_BASE_URL` of the
+/// Halv process, else the Anthropic API.
+fn claude_subscription_upstream() -> String {
+    env::var("ANTHROPIC_BASE_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| ANTHROPIC_DEFAULT_BASE_URL.to_string())
+}
+
+/// The upstream of the Claude API key lane: the base URL of the session,
+/// else the Anthropic API.
+pub(super) fn claude_api_key_upstream(base_url: Option<&str>) -> &str {
+    base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(ANTHROPIC_DEFAULT_BASE_URL)
+}
+
+/// The upstreams that the Anthropic-format lanes send to the shared Halv
+/// Engine in `X-Headroom-Base-Url`. The base URL of a Claude API key session
+/// is not in this list (see `claude_api_key_upstream`).
+pub(super) fn engine_upstreams() -> Vec<String> {
+    vec![
+        claude_subscription_upstream(),
+        ANTHROPIC_DEFAULT_BASE_URL.to_string(),
+        ZAI_ANTHROPIC_BASE_URL.to_string(),
+        GROK_ANTHROPIC_BASE_URL.to_string(),
+    ]
 }
 
 /// Points an Anthropic-format lane at the session prefix of the Halv Engine.
@@ -3093,6 +3118,45 @@ mod tests {
     }
 
     #[test]
+    fn engine_upstreams_hold_every_upstream_that_a_lane_sends() {
+        let _guard = super::super::CLAUDE_CONFIG_DIR_TEST_LOCK
+            .lock()
+            .expect("Claude environment test lock poisoned");
+        let previous_base_url = env::var_os("ANTHROPIC_BASE_URL");
+        env::remove_var("ANTHROPIC_BASE_URL");
+        assert_eq!(
+            engine_upstreams(),
+            vec![
+                ANTHROPIC_DEFAULT_BASE_URL,
+                ANTHROPIC_DEFAULT_BASE_URL,
+                ZAI_ANTHROPIC_BASE_URL,
+                GROK_ANTHROPIC_BASE_URL,
+            ]
+        );
+
+        // The subscription lane sends the gateway of the Halv environment.
+        env::set_var("ANTHROPIC_BASE_URL", " http://localhost:4000/anthropic ");
+        let upstreams = engine_upstreams();
+        assert_eq!(upstreams[0], "http://localhost:4000/anthropic");
+        assert_eq!(upstreams[0], claude_subscription_upstream());
+
+        match previous_base_url {
+            Some(value) => env::set_var("ANTHROPIC_BASE_URL", value),
+            None => env::remove_var("ANTHROPIC_BASE_URL"),
+        }
+
+        assert_eq!(claude_api_key_upstream(None), ANTHROPIC_DEFAULT_BASE_URL);
+        assert_eq!(
+            claude_api_key_upstream(Some("  ")),
+            ANTHROPIC_DEFAULT_BASE_URL
+        );
+        assert_eq!(
+            claude_api_key_upstream(Some(" http://10.0.0.5:8080 ")),
+            "http://10.0.0.5:8080"
+        );
+    }
+
+    #[test]
     fn zai_lane_sets_proxy_auth_timeout_and_model_environment() {
         let lane = SessionLane::ZaiGlm {
             credential: super::super::SessionCredential::ApiKey {
@@ -3723,10 +3787,28 @@ mod tests {
         assert!(configuration.contains("--coordinator-model"));
         assert!(configuration.contains("conversation-1"));
 
+        assert!(!configuration.contains("--task-routing"));
+
         let plain = spec(false);
         assert!(!plain
             .windows(2)
             .any(|pair| pair[0] == "--append-system-prompt"));
+        // Without routing, the savings server lists no routing tool
+        // (ADR 0023). The savings tools stay.
+        let configuration = plain
+            .windows(2)
+            .find(|pair| pair[0] == "--mcp-config")
+            .map(|pair| pair[1].to_string_lossy().into_owned())
+            .expect("the MCP configuration should exist");
+        assert!(configuration.contains("halv-savings"));
+        assert!(
+            configuration.contains(r#""--task-routing","off""#),
+            "{configuration}"
+        );
+        assert!(
+            configuration.contains(r#""--workflow-routing","off""#),
+            "{configuration}"
+        );
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -9,6 +9,10 @@ use std::{
 };
 
 const PREFERENCES_FILE_NAME: &str = "preferences.json";
+/// An empty file next to the preferences file. It keeps a task brief "no"
+/// when Halv cannot write the preferences file (ADR 0023). Each reader of
+/// the answer treats it as `Declined`.
+const BRIEF_SHARING_DECLINED_FILE_NAME: &str = "brief-sharing-declined";
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +68,20 @@ impl AnalyticsConsent {
     }
 }
 
+/// The answer to the task brief question (ADR 0023). JEV task routing sends
+/// each task brief to halv.ai. Halv sends a brief only for `Allowed`.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BriefSharing {
+    /// The user did not answer yet. Halv sends no brief.
+    #[default]
+    Unset,
+    /// The user agreed. Halv sends task briefs to halv.ai.
+    Allowed,
+    /// The user said no. Halv sends no brief.
+    Declined,
+}
+
 /// The lane the user forces on every worker. `Auto` follows the coordinator.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -106,6 +124,9 @@ pub struct AgentPreferences {
     pub routing_tier_agents: TierAgentAssignments,
     /// JEV routes the agents of a Claude Code Workflow script (ADR 0014).
     pub workflow_routing: bool,
+    /// Task briefs leave the device only for `Allowed` (ADR 0023). A file
+    /// without the key reads `Unset`.
+    pub brief_sharing: BriefSharing,
     /// New Claude panes start with ultracode on.
     pub claude_ultracode: bool,
     /// Halv sends usage events only when this is `On` (ADR 0021).
@@ -146,6 +167,17 @@ impl AgentPreferences {
     pub fn effective_claude_subscription_proxy(&self) -> bool {
         self.headroom_enabled && self.claude_subscription_proxy
     }
+
+    /// A launch routes tasks only when the switch is on and the user allowed
+    /// task briefs to leave the device (ADR 0023).
+    pub fn effective_task_routing(&self) -> bool {
+        self.task_routing && self.brief_sharing == BriefSharing::Allowed
+    }
+
+    /// Workflow routing also sends briefs, so it needs task routing too.
+    pub fn effective_workflow_routing(&self) -> bool {
+        self.workflow_routing && self.effective_task_routing()
+    }
 }
 
 impl Default for AgentPreferences {
@@ -165,6 +197,7 @@ impl Default for AgentPreferences {
             worker_lane: WorkerLanePreference::Auto,
             routing_tier_agents: TierAgentAssignments::default(),
             workflow_routing: true,
+            brief_sharing: BriefSharing::Unset,
             claude_ultracode: false,
             analytics_consent: AnalyticsConsent::Unset,
             analytics_enabled: false,
@@ -194,12 +227,16 @@ impl PreferencesManager {
     pub fn open(app_data_dir: &Path) -> io::Result<Self> {
         fs::create_dir_all(app_data_dir)?;
         let path = app_data_dir.join(PREFERENCES_FILE_NAME);
-        let preferences = match fs::read(&path) {
+        let mut preferences = match fs::read(&path) {
             Ok(contents) => parse_preferences(&contents)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => AgentPreferences::default(),
             Err(error) => return Err(error),
         };
+        // A "no" that Halv could not write to the file stays a "no".
+        if brief_sharing_declined_path(&path).exists() {
+            preferences.brief_sharing = BriefSharing::Declined;
+        }
         validate_subagent_concurrency_limit(preferences.subagent_concurrency_limit)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         validate_keyboard_shortcuts(&preferences.keyboard_shortcuts)
@@ -250,6 +287,8 @@ impl PreferencesManager {
         self.get().map(|preferences| preferences.memories_enabled)
     }
 
+    /// The switch alone. A launch reads `effective_task_routing`.
+    #[cfg(test)]
     pub fn task_routing(&self) -> Result<bool, String> {
         self.get().map(|preferences| preferences.task_routing)
     }
@@ -263,8 +302,27 @@ impl PreferencesManager {
             .map(|preferences| preferences.routing_tier_agents.clone())
     }
 
+    /// The switch alone. A launch reads `effective_workflow_routing`.
+    #[cfg(test)]
     pub fn workflow_routing(&self) -> Result<bool, String> {
         self.get().map(|preferences| preferences.workflow_routing)
+    }
+
+    /// Task routing for a new launch: the switch and the brief answer.
+    pub fn effective_task_routing(&self) -> Result<bool, String> {
+        self.get()
+            .map(|preferences| preferences.effective_task_routing())
+    }
+
+    /// Workflow routing for a new launch: the switch and task routing.
+    pub fn effective_workflow_routing(&self) -> Result<bool, String> {
+        self.get()
+            .map(|preferences| preferences.effective_workflow_routing())
+    }
+
+    #[cfg(test)]
+    pub fn brief_sharing(&self) -> Result<BriefSharing, String> {
+        self.get().map(|preferences| preferences.brief_sharing)
     }
 
     pub fn claude_ultracode(&self) -> Result<bool, String> {
@@ -523,6 +581,51 @@ impl PreferencesManager {
         Ok(next)
     }
 
+    /// Saves the answer to the task brief question (ADR 0023). `Unset` is
+    /// not an answer.
+    ///
+    /// A "no" fails closed:
+    /// - The running app uses it before the write. Thus a new launch does
+    ///   not route, also when the write fails.
+    /// - When Halv cannot write the preferences file, it writes the empty
+    ///   "no" file. The MCP server and the next app start read that file.
+    /// - The error tells the caller that neither file saved the answer.
+    ///
+    /// A "yes" takes effect only after the write and after Halv removes the
+    /// "no" file.
+    pub fn set_brief_sharing(
+        &self,
+        brief_sharing: BriefSharing,
+    ) -> Result<AgentPreferences, String> {
+        if brief_sharing == BriefSharing::Unset {
+            return Err("Task brief sharing must be allowed or declined".to_string());
+        }
+        let mut current = self
+            .preferences
+            .write()
+            .map_err(|_| "Preferences lock is poisoned".to_string())?;
+        let mut next = current.clone();
+        next.brief_sharing = brief_sharing;
+        let declined_path = brief_sharing_declined_path(&self.path);
+        if brief_sharing == BriefSharing::Declined {
+            *current = next.clone();
+            if let Err(error) = write_preferences_atomically(&self.path, &next) {
+                fs::write(&declined_path, b"").map_err(|_| error.to_string())?;
+            }
+            return Ok(next);
+        }
+        write_preferences_atomically(&self.path, &next).map_err(|error| error.to_string())?;
+        match fs::remove_file(&declined_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            // The "no" file still wins in every reader, so the app keeps
+            // its current answer too.
+            Err(error) => return Err(error.to_string()),
+        }
+        *current = next.clone();
+        Ok(next)
+    }
+
     pub fn set_app_update_auto_download(
         &self,
         app_update_auto_download: bool,
@@ -641,6 +744,14 @@ fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
                 object.remove(key);
             }
         }
+        // A damaged task brief answer reads `Unset`, so Halv asks again and
+        // sends nothing until then (ADR 0023).
+        if object
+            .get(BRIEF_SHARING_KEY)
+            .is_some_and(|value| brief_sharing_from_value(value).is_none())
+        {
+            object.remove(BRIEF_SHARING_KEY);
+        }
     }
     let has_asked = value.get("analyticsConsentAsked").is_some();
     let mut preferences = serde_json::from_value::<AgentPreferences>(value)?;
@@ -656,6 +767,48 @@ fn parse_preferences(contents: &[u8]) -> serde_json::Result<AgentPreferences> {
             u8::from(preferences.analytics_consent != AnalyticsConsent::Unset);
     }
     Ok(preferences)
+}
+
+const BRIEF_SHARING_KEY: &str = "briefSharing";
+
+/// The saved answer of a JSON value, or `None` for a value that is not an
+/// answer name.
+fn brief_sharing_from_value(value: &serde_json::Value) -> Option<BriefSharing> {
+    match value.as_str()? {
+        "unset" => Some(BriefSharing::Unset),
+        "allowed" => Some(BriefSharing::Allowed),
+        "declined" => Some(BriefSharing::Declined),
+        _ => None,
+    }
+}
+
+/// The path of the preferences file in the app data folder.
+pub(crate) fn preferences_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(PREFERENCES_FILE_NAME)
+}
+
+/// The path of the "no" file next to a preferences file.
+fn brief_sharing_declined_path(preferences_path: &Path) -> PathBuf {
+    preferences_path.with_file_name(BRIEF_SHARING_DECLINED_FILE_NAME)
+}
+
+/// Reads the task brief answer from a preferences file, for a process that
+/// has no `PreferencesManager` (the savings MCP server). A missing file, a
+/// damaged file, or a damaged value reads `Unset`, so the caller sends
+/// nothing. The "no" file reads `Declined` (ADR 0023).
+pub(crate) fn brief_sharing_in_file(path: &Path) -> BriefSharing {
+    if brief_sharing_declined_path(path).exists() {
+        return BriefSharing::Declined;
+    }
+    fs::read(path)
+        .ok()
+        .and_then(|contents| serde_json::from_slice::<serde_json::Value>(&contents).ok())
+        .and_then(|value| {
+            value
+                .get(BRIEF_SHARING_KEY)
+                .and_then(brief_sharing_from_value)
+        })
+        .unwrap_or_default()
 }
 
 /// How much an answer shares: nothing, list version 1, or list version 2.
@@ -872,6 +1025,17 @@ pub fn preferences_set_workflow_routing(
     workflow_routing: bool,
 ) -> Result<AgentPreferences, String> {
     manager.set_workflow_routing(workflow_routing)
+}
+
+/// Saves the answer to the task brief question (ADR 0023). The answer
+/// applies to new agent sessions. The savings MCP server of a running
+/// session reads it from the file before each brief.
+#[tauri::command]
+pub fn preferences_set_brief_sharing(
+    manager: tauri::State<'_, PreferencesManager>,
+    brief_sharing: BriefSharing,
+) -> Result<AgentPreferences, String> {
+    manager.set_brief_sharing(brief_sharing)
 }
 
 #[tauri::command]
@@ -1858,5 +2022,184 @@ mod tests {
             .expect("read preferences")
             .keyboard_shortcuts
             .is_empty());
+    }
+
+    #[test]
+    fn brief_sharing_defaults_unset_and_roundtrips() {
+        assert_eq!(
+            AgentPreferences::default().brief_sharing,
+            BriefSharing::Unset
+        );
+        let directory = TestDirectory::new("brief-sharing");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Unset);
+        assert!(manager.set_brief_sharing(BriefSharing::Unset).is_err());
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Unset);
+
+        let saved = manager
+            .set_brief_sharing(BriefSharing::Allowed)
+            .expect("allow briefs");
+        assert_eq!(saved.brief_sharing, BriefSharing::Allowed);
+        let path = preferences_path(&directory.0);
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Allowed);
+        let file: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(file["briefSharing"], "allowed");
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(reopened.brief_sharing().unwrap(), BriefSharing::Allowed);
+
+        reopened
+            .set_brief_sharing(BriefSharing::Declined)
+            .expect("decline briefs");
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Declined);
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(reopened.brief_sharing().unwrap(), BriefSharing::Declined);
+    }
+
+    #[test]
+    fn an_old_preferences_file_migrates_brief_sharing_to_unset() {
+        // A 1.0.1 file has task routing on and no `briefSharing` key. A
+        // damaged value also reads `Unset`. Neither stops the start.
+        for contents in [
+            r#"{ "taskRouting": true, "workflowRouting": true }"#,
+            r#"{ "taskRouting": true, "briefSharing": "yes" }"#,
+            r#"{ "taskRouting": true, "briefSharing": true }"#,
+            r#"{ "taskRouting": true, "briefSharing": null }"#,
+        ] {
+            let directory = TestDirectory::new("brief-sharing-migration");
+            let path = preferences_path(&directory.0);
+            fs::write(&path, contents).expect("write old preferences");
+            let manager = PreferencesManager::open(&directory.0).expect(contents);
+            let preferences = manager.get().unwrap();
+            assert_eq!(preferences.brief_sharing, BriefSharing::Unset, "{contents}");
+            assert!(preferences.task_routing, "{contents}");
+            assert!(!preferences.effective_task_routing(), "{contents}");
+            assert!(!manager.effective_task_routing().unwrap(), "{contents}");
+            assert!(!manager.effective_workflow_routing().unwrap(), "{contents}");
+            assert_eq!(
+                brief_sharing_in_file(&path),
+                BriefSharing::Unset,
+                "{contents}"
+            );
+        }
+        let saved = serde_json::to_value(AgentPreferences::default()).unwrap();
+        assert_eq!(saved["briefSharing"], "unset");
+    }
+
+    #[test]
+    fn a_missing_or_damaged_file_reads_no_brief_sharing() {
+        let directory = TestDirectory::new("brief-sharing-file");
+        let path = preferences_path(&directory.0);
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Unset);
+        fs::write(&path, b"{ not json").unwrap();
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Unset);
+        fs::write(&path, br#"{ "briefSharing": "ALLOWED" }"#).unwrap();
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Unset);
+        fs::write(&path, br#"{ "briefSharing": "allowed" }"#).unwrap();
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Allowed);
+    }
+
+    #[test]
+    fn effective_routing_needs_the_switch_and_an_allowed_brief_answer() {
+        // (task routing, workflow routing, answer, task, workflow)
+        let cases = [
+            (true, true, BriefSharing::Allowed, true, true),
+            (true, false, BriefSharing::Allowed, true, false),
+            (false, true, BriefSharing::Allowed, false, false),
+            (true, true, BriefSharing::Unset, false, false),
+            (true, true, BriefSharing::Declined, false, false),
+            (false, false, BriefSharing::Declined, false, false),
+        ];
+        for (task_routing, workflow_routing, brief_sharing, task, workflow) in cases {
+            let preferences = AgentPreferences {
+                task_routing,
+                workflow_routing,
+                brief_sharing,
+                ..AgentPreferences::default()
+            };
+            assert_eq!(
+                preferences.effective_task_routing(),
+                task,
+                "{task_routing} {workflow_routing} {brief_sharing:?}"
+            );
+            assert_eq!(
+                preferences.effective_workflow_routing(),
+                workflow,
+                "{task_routing} {workflow_routing} {brief_sharing:?}"
+            );
+        }
+        let directory = TestDirectory::new("brief-sharing-effective");
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        assert!(manager.task_routing().unwrap());
+        assert!(!manager.effective_task_routing().unwrap());
+        manager.set_brief_sharing(BriefSharing::Allowed).unwrap();
+        assert!(manager.effective_task_routing().unwrap());
+        assert!(manager.effective_workflow_routing().unwrap());
+        manager.set_task_routing(false).unwrap();
+        assert!(!manager.effective_task_routing().unwrap());
+    }
+
+    #[test]
+    fn a_decline_survives_a_failed_preferences_write() {
+        let directory = TestDirectory::new("brief-sharing-write-fails");
+        let path = preferences_path(&directory.0);
+        let declined_path = brief_sharing_declined_path(&path);
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        manager.set_brief_sharing(BriefSharing::Allowed).unwrap();
+        let temporary_path = path.with_extension("json.tmp");
+        fs::create_dir_all(&temporary_path).expect("block the temporary file");
+
+        // The preferences file still says "allowed". The "no" file wins.
+        let saved = manager
+            .set_brief_sharing(BriefSharing::Declined)
+            .expect("the no file saves the answer");
+        assert_eq!(saved.brief_sharing, BriefSharing::Declined);
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Declined);
+        assert!(!manager.effective_task_routing().unwrap());
+        assert!(declined_path.is_file());
+        let file: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(file["briefSharing"], "allowed");
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Declined);
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(reopened.brief_sharing().unwrap(), BriefSharing::Declined);
+
+        // A later "yes" removes the "no" file.
+        fs::remove_dir(&temporary_path).unwrap();
+        reopened
+            .set_brief_sharing(BriefSharing::Allowed)
+            .expect("allow briefs");
+        assert!(!declined_path.exists());
+        assert_eq!(brief_sharing_in_file(&path), BriefSharing::Allowed);
+        let reopened = PreferencesManager::open(&directory.0).expect("reopen preferences");
+        assert_eq!(reopened.brief_sharing().unwrap(), BriefSharing::Allowed);
+    }
+
+    #[test]
+    fn a_decline_holds_in_memory_when_no_file_saves() {
+        let directory = TestDirectory::new("brief-sharing-no-file-saves");
+        let path = preferences_path(&directory.0);
+        let manager = PreferencesManager::open(&directory.0).expect("open preferences");
+        manager.set_brief_sharing(BriefSharing::Allowed).unwrap();
+        fs::create_dir_all(path.with_extension("json.tmp")).expect("block the temporary file");
+        fs::create_dir_all(brief_sharing_declined_path(&path)).expect("block the no file");
+        assert!(manager.set_brief_sharing(BriefSharing::Declined).is_err());
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Declined);
+        assert!(!manager.effective_task_routing().unwrap());
+
+        // A failed "yes" does not turn sharing on.
+        let other = TestDirectory::new("brief-sharing-allow-fails");
+        let manager = PreferencesManager::open(&other.0).expect("open preferences");
+        fs::create_dir_all(preferences_path(&other.0).with_extension("json.tmp")).unwrap();
+        assert!(manager.set_brief_sharing(BriefSharing::Allowed).is_err());
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Unset);
+
+        // A "no" file that Halv cannot remove keeps "no" everywhere.
+        let stuck = TestDirectory::new("brief-sharing-stuck-no");
+        let stuck_path = preferences_path(&stuck.0);
+        fs::create_dir_all(brief_sharing_declined_path(&stuck_path)).unwrap();
+        let manager = PreferencesManager::open(&stuck.0).expect("open preferences");
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Declined);
+        assert!(manager.set_brief_sharing(BriefSharing::Allowed).is_err());
+        assert_eq!(manager.brief_sharing().unwrap(), BriefSharing::Declined);
+        assert_eq!(brief_sharing_in_file(&stuck_path), BriefSharing::Declined);
     }
 }

@@ -127,6 +127,7 @@ const APP_COMMANDS: &[&str] = &[
     "preferences_set_task_routing",
     "preferences_set_worker_lane",
     "preferences_set_workflow_routing",
+    "preferences_set_brief_sharing",
     "preferences_set_claude_ultracode",
     "preferences_set_show_dot_shortcut",
     "preferences_set_routing_tier_agents",

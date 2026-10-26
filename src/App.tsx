@@ -6,7 +6,9 @@ import {
   ConsentNoticeBanner,
   useAnonymousUsagePreference,
 } from "./components/AnonymousUsagePreference";
-import { ipc, type UnlistenFn } from "./ipc.ts";
+import { ipc, setAgentLaunchGate, type UnlistenFn } from "./ipc.ts";
+import { briefSharingGate } from "./briefSharingGate.ts";
+import { BRIEF_SHARING_NEEDED_EVENT } from "./briefSharing.ts";
 import { openExternalLink } from "./externalLinks.ts";
 import { dotShortcutVisible } from "./preferences.ts";
 import {
@@ -106,6 +108,7 @@ import { BrowserPanel } from "./components/BrowserPanel";
 import { ChatComposer } from "./components/ChatComposer";
 import { CommandPaletteDialog } from "./components/CommandPaletteDialog";
 import { AppDialogHost } from "./components/AppDialogHost";
+import { BriefSharingPrompt } from "./components/BriefSharingPrompt";
 import { ConnectGate } from "./components/ConnectGate";
 import { copyText } from "./clipboard";
 import { ExtensionsPanel } from "./components/ExtensionsPanel";
@@ -10279,6 +10282,43 @@ function App() {
       ONBOARDING_REPLAY_ENABLED ? null : status.account,
     );
   }, [status.account]);
+  // ADR 0023: every agent launch passes the task brief gate. A click or a
+  // key press marks the next launch as one that the user started.
+  // A launch that Rust starts, for example from the phone remote, has no
+  // IPC gate. Rust then emits an event, and the gate shows the card.
+  useEffect(() => {
+    setAgentLaunchGate(briefSharingGate.beforeLaunch);
+    const noteUserInput = () => briefSharingGate.noteUserInput();
+    window.addEventListener("pointerdown", noteUserInput, true);
+    window.addEventListener("keydown", noteUserInput, true);
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    void ipc.events
+      .listen<void>(BRIEF_SHARING_NEEDED_EVENT, () => {
+        void briefSharingGate.launchedWithoutAnswer();
+      })
+      .then((listener) => {
+        if (disposed) listener();
+        else unlisten = listener;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+      setAgentLaunchGate(null);
+      window.removeEventListener("pointerdown", noteUserInput, true);
+      window.removeEventListener("keydown", noteUserInput, true);
+    };
+  }, []);
+  // The gate never asks a signed-out install or an account without Halv
+  // Cloud. Until the account status loads, the access is unknown.
+  const briefSharingAccessKnown =
+    ONBOARDING_REPLAY_ENABLED || status.account !== null;
+  useEffect(() => {
+    briefSharingGate.setAccess(
+      briefSharingAccessKnown ? { granted: halvCloudAccess.granted } : null,
+    );
+  }, [briefSharingAccessKnown, halvCloudAccess.granted]);
   // Missing or old entitlements never block local work (ADR 0021). Halv
   // refreshes them in the background until the sync succeeds.
   const accountNeedsSync = status.account
@@ -12170,6 +12210,7 @@ function App() {
       />
 
       <MobileRemoteHost />
+      <BriefSharingPrompt />
       <AppDialogHost />
     </main>
   );

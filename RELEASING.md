@@ -1,7 +1,9 @@
 # Releasing Halv
 
-Halv uses Tauri v2 updater artifacts hosted on GitHub Releases. Since 1.0.1,
-the updater tries two endpoints in this order:
+Halv uses Tauri v2 updater artifacts hosted on GitHub Releases. From 1.0.2,
+each release publishes to the Releases of `halv-ai/halv`. CI builds it from
+the public code of this repository. Since 1.0.1, the updater tries two
+endpoints in this order:
 
 ```text
 https://github.com/halv-ai/halv/releases/latest/download/latest.json
@@ -10,9 +12,10 @@ https://github.com/pedr0v/halv-releases/releases/latest/download/latest.json
 
 The updater skips an endpoint that returns an error status, such as 404, and
 tries the next one. Halv 1.0.0 and older know only the `pedr0v/halv-releases`
-endpoint. Releases publish to `halv-ai/halv` from 1.0.2. Keep `latest.json`
-current in `pedr0v/halv-releases` for every release, so that old installs still
-find updates. Never delete or archive that repository.
+endpoint. For each release, CI also puts `latest.json` into a release with the
+same tag in `pedr0v/halv-releases`. The URLs in that file point to the assets
+in `halv-ai/halv`, so old installs still find updates. Never delete or archive
+`pedr0v/halv-releases`.
 
 ## 1. Generate updater signing keys
 
@@ -32,21 +35,38 @@ A fork that publishes its own releases must do these steps:
 1. Generate its own key pair with the command above.
 2. Put the new public key in `plugins.updater.pubkey`.
 3. Point `plugins.updater.endpoints` to the `latest.json` file of its own releases repository.
+4. In `.github/workflows/build.yml`, change the `github.repository` and
+   `github.actor_id` checks of the release jobs.
+5. Remove the step "Publish latest.json for Halv 1.0.0 and older". It writes
+   to `pedr0v/halv-releases`.
 
 If the key and the endpoint do not match signed release assets, the app cannot install updates.
 
 ## 2. Protected release environment and secrets
 
-Allow the `release` environment to deploy only from `main`. Move all release-signing secrets into that environment, then delete any repository- or organization-level copies. Public repositories support required reviewers on all plans: require an operator and prevent self-review. The workflow's stable `github.actor_id` allowlist is a second, in-repository authorization check. Update that ID if the release operator account changes. Keep the workflow's third-party actions pinned to full commit SHAs.
+Allow the `release` environment to deploy only from `main`. Move all release-signing secrets into that environment, then delete any repository- or organization-level copies. Public repositories support required reviewers on all plans: require a release operator. Prevent self-review only when a second release operator exists, because the operator who sends the dispatch cannot approve it then. The workflow's stable `github.actor_id` allowlist is a second, in-repository authorization check. Update that ID if the release operator account changes. Keep the workflow's third-party actions pinned to full commit SHAs.
 
 Required for updater releases:
 
 - `TAURI_SIGNING_PRIVATE_KEY`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the private key is encrypted
-- `HEADROOM_REPO_TOKEN`, a fine-grained read-only token scoped only to the
-  private `pedr0v/headroom` repository
 - `RELEASE_REPO_TOKEN`, a fine-grained token with contents:write scoped only to
-  the public `pedr0v/halv-releases` repository
+  the public `pedr0v/halv-releases` repository. CI uses it only to put
+  `latest.json` there for Halv 1.0.0 and older.
+
+Required for the website refresh:
+
+- `WEBSITE_REPO_TOKEN`, a fine-grained token with contents:write scoped only to
+  the website repository. CI uses it only to send the `halv-release-published`
+  dispatch.
+
+Optional variable:
+
+- `WEBSITE_REPOSITORY`, the repository that gets the website dispatch. The
+  default is `pedr0v/halv-web`.
+
+CI reads the Headroom fork from the public `halv-ai/headroom` repository and
+needs no token for it. Delete the old `HEADROOM_REPO_TOKEN` secret.
 
 Required for signed and notarized macOS artifacts:
 
@@ -74,8 +94,27 @@ Create the account and public trust profile with
 Assign the service principal the `Artifact Signing Certificate Profile Signer`
 role for the profile.
 
-`GITHUB_TOKEN` is provided by GitHub Actions. Release artifacts and
-`latest.json` publish to `pedr0v/halv-releases` with `RELEASE_REPO_TOKEN`.
+GitHub Actions provides `GITHUB_TOKEN`. The release jobs use it to create,
+fill, and publish the release in `halv-ai/halv`. Each job gets only the
+permissions that it needs:
+
+| Job | `GITHUB_TOKEN` permissions | Secrets |
+| --- | --- | --- |
+| Validate release | contents: read | none |
+| Authorize and prepare draft release | contents: write | none |
+| Generate app SBOM | contents: read | none |
+| Build | contents: write | Tauri, Apple, and Azure signing |
+| Verify and publish release | contents: write, id-token: write, attestations: write | `RELEASE_REPO_TOKEN`, `WEBSITE_REPO_TOKEN` |
+
+The SBOM tool (syft, through `anchore/sbom-action`) gets no token. The workflow
+sets the `github-token` input of the action to an empty value. The tool runs
+only in the app SBOM job, which can only read, and at the end of each build
+job. A build job runs it after it uploaded its release files and removed the
+Apple signing keychain. The jobs give the SBOMs to the publish job as workflow
+artifacts.
+
+Only `halv-ai/halv` runs the release jobs. A `release-halv` dispatch to another
+repository, for example the private repository, runs only the tests.
 
 ## Local preflight before release
 
@@ -103,49 +142,251 @@ keychain has no matching Developer ID certificate or named notary profile. Run t
 failures without consuming the three release jobs; macOS GitHub-hosted runners
 consume credits at 10 times the base rate.
 
+## Public export before release
+
+The maintainer develops Halv in a private repository.
+The private repository also holds the account server, the relay, and the phone app.
+`scripts/export-public.mjs` copies the public part of one private commit into a
+checkout of this repository. `scripts/public-export.json` controls the export:
+
+- `exclude` lists the private paths.
+- `overlayDir` holds files that only this repository gets, for example `.github/dependabot.yml`.
+- `denyPaths`, `denyContent`, and `denyTokenHashes` stop the export when a private path,
+  a secret, or a personal identifier would leak. `allowlist` lists the reviewed safe hits.
+  The leak guard also decodes escaped text, for example `%2FUsers%2F<name>`, `\u002F`, or `&#x2F;`.
+  It also stops when an exported file holds a value from `denyTokenHashes`.
+
+`scripts/public-export.json` holds only the generic rules.
+The private repository also has `scripts/public-export.private.json`.
+That file holds the rules that name a private file or a person, for example the hashes for `denyTokenHashes`.
+The script adds the lists of the private file to the lists of `scripts/public-export.json`.
+The script never copies `scripts/public-export.private.json`.
+`"requirePrivateConfig": true` stops the export when the private file is missing.
+It also stops the export when the private file has an empty `exclude` or `denyTokenHashes` list.
+
+The script reads only committed content through git. Uncommitted work never leaks.
+It never pushes.
+
+Do these steps in the private repository before each release:
+
+0. Run `git -C ../oss pull --ff-only`.
+1. Commit the release change.
+2. Run `node scripts/export-public.mjs --dry-run`. Read the added, changed, and deleted paths.
+   Read the commit message.
+3. Make sure that each added path is public. The script refuses to add paths without `--accept-new`.
+4. Run `node scripts/export-public.mjs --accept-new --commit`.
+   The script commits in `../oss` with a `Source-Commit: <sha>` trailer.
+   The commit message lists the subjects of the private commits since the last export.
+   It lists only the commits that change an exported path.
+   The script stops when the message names an `exclude` or `denyPaths` entry, for example `server/`.
+   Then run again with `--omit-subjects` and `--message "<subject>"`.
+5. Review the commit in `../oss`, then push it to `main` of `halv-ai/halv`.
+
+The script runs `git fetch` in `../oss`. It stops when `../oss` is behind its upstream branch or has no upstream branch.
+It also stops when the fetch does not finish in 60 seconds.
+When `../oss` is behind, a dry run shows a warning and continues. `--offline` skips the fetch and the check.
+The script reads the last exported commit from the newest `Source-Commit` trailer.
+The first export after a manual sync needs `--since <private sha>`.
+The script stops when this repository has commits after the last export, for example a merged pull request.
+Apply those commits to the private repository first, then run again with `--allow-public-commits`.
+`node scripts/export-public.mjs --check` exits with status 1 when this repository differs from the export.
+
 ## 3. Release flow
 
-1. Update `package.json` and `src-tauri/tauri.conf.json` / `Cargo.toml` versions.
-2. Merge the version change into protected `main` and wait for its Test check to pass.
-3. As the release operator, create the protected tag at that exact `main` commit and push it. A tag push does not run the signing workflow.
+### Before the dispatch
+
+Do these checks before each release:
+
+1. Make sure that `halv-ai/headroom` has the Headroom commit of
+   `scripts/headroom-runtime.lock.json`. Release CI cannot build a commit that
+   is not there. This command must print the full commit SHA:
 
    ```sh
-   git tag v0.1.3
-   git push origin v0.1.3
+   gh api repos/halv-ai/headroom/commits/"$(jq -r .commit scripts/headroom-runtime.lock.json)" --jq .sha
+   ```
+
+2. Make sure that `halv-ai/halv` has the active tag ruleset for `v*`. See the
+   end of this section. `gh api repos/halv-ai/halv/rulesets` must list a
+   ruleset with `"target": "tag"`.
+3. Make sure that the `release` environment of `halv-ai/halv` has the secrets
+   of section 2 and no `HEADROOM_REPO_TOKEN`. To list them, run
+   `gh secret list --env release -R halv-ai/halv`.
+4. Make sure that the deployed website reads its release metadata from
+   `halv-ai/halv`. From 1.0.2, a release in `pedr0v/halv-releases` holds only
+   `latest.json`. A website that reads only `pedr0v/halv-releases` keeps the
+   old version.
+
+### Steps
+
+1. In the private repository, update the version in `package.json`,
+   `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`. Commit the change.
+2. Export the commit to `../oss` and push it to `main` of `halv-ai/halv`. See
+   "Public export before release". Wait for the Test check of that commit in
+   `halv-ai/halv` to pass.
+3. As the release operator, create the protected tag in `../oss` at the
+   exported `main` commit and push it to `halv-ai/halv`. The tag in the private
+   repository has no effect, because the exported commit has a different SHA.
+   A tag push does not run the signing workflow.
+
+   ```sh
+   git -C ../oss fetch origin
+   git -C ../oss tag v1.0.2 origin/main
+   git -C ../oss push origin v1.0.2
    ```
 
 4. Dispatch the trusted default-branch workflow with the matching tag:
 
    ```sh
    gh api --method POST repos/halv-ai/halv/dispatches --input - <<'JSON'
-   {"event_type":"release-halv","client_payload":{"tag":"v0.1.3"}}
+   {"event_type":"release-halv","client_payload":{"tag":"v1.0.2"}}
    JSON
    ```
 
-5. Approve pending `release` environment deployments when the repository plan supports reviewers. CI checks the stable release-operator account ID, tests the captured `main` commit, verifies that all three source versions and the protected tag point to that exact SHA, and creates or safely reuses one draft release.
-6. GitHub Actions checks out the exact Headroom fork commit recorded in
-   `scripts/headroom-runtime.lock.json`, freezes it natively, and builds macOS
-   arm64, macOS x64, Linux x64, and Windows x64 artifacts from the tagged Halv SHA.
+5. Approve the pending `release` environment deployments. Each run asks three
+   times: for the draft, for the builds, and for the publication. CI checks the
+   stable release-operator account ID and tests the captured `main` commit. It
+   verifies that all three source versions and the protected tag point to that
+   exact SHA. Then it creates or safely reuses one draft release in
+   `halv-ai/halv`.
+6. GitHub Actions checks out the exact Headroom fork commit from the public
+   `halv-ai/headroom` repository, as `scripts/headroom-runtime.lock.json`
+   records it. It freezes the fork natively. Then it builds macOS arm64, macOS
+   x64, Linux x64, and Windows x64 artifacts from the tagged Halv SHA.
    The Linux build creates DEB, RPM, and AppImage packages.
 7. Tauri signs updater artifacts with `TAURI_SIGNING_PRIVATE_KEY`. Do not pass
    Tauri's `--no-sign` flag to a release target: it disables updater signatures
    as well as platform signing.
-8. CI revalidates the protected tag, assembles and uploads `latest.json` from
-   the release assets and `.sig` files, then publishes the release. Publication
-   fails closed unless the manifest contains macOS arm64 and x64, Linux
-   AppImage, DEB, RPM, and Windows x64 MSI updater targets.
-9. After publication, CI converts every older public release to a draft so only
-   the newest version and its installers remain public. The operation is
-   reversible; old artifacts are retained for maintainers rather than deleted.
-10. CI dispatches `halv-release-published` to `pedr0v/halv-web`. The website
+8. Each build job uploads its installers, updater archives, and `.sig` files to
+   the draft. It also uploads the two runtime file manifests of its target:
+   `runtime-files-<target>.sha256.json` and
+   `runtime-files-<target>.signed.sha256.json`. Then it makes
+   `sbom-headroom-runtime-<target>.cdx.json` and keeps it as a workflow
+   artifact.
+9. The app SBOM job makes `sbom-halv-app.cdx.json`, the SBOM of the Rust
+   crates and npm packages of the app. It keeps the file as a workflow
+   artifact.
+10. The publish job revalidates the protected tag. Then it does these steps on
+    the draft:
+    1. It makes `latest.json` from the release assets and the `.sig` files.
+       Publication fails closed unless the manifest contains macOS arm64 and
+       x64, Linux AppImage, DEB, RPM, and Windows x64 MSI updater targets.
+    2. It downloads the five SBOMs, checks that each one is a CycloneDX file,
+       and uploads them to the draft.
+    3. It checks that each target uploaded its runtime manifests and that both
+       DMG installers are present.
+    4. It downloads each asset of the draft and writes `SHA256SUMS`.
+    5. It makes one build provenance attestation for the installers, the
+       updater archives, the runtime manifests, the SBOMs, and `SHA256SUMS`.
+    6. It publishes the release. It stops when an asset changed after it wrote
+       `SHA256SUMS`.
+    7. It makes sure that GitHub marks the release as the latest one. The
+       updater reads `/releases/latest`. CI does not take the mark from a newer
+       release.
+11. CI puts the same `latest.json` into a release with the same tag in
+    `pedr0v/halv-releases`, and marks that release as the latest one. It
+    replaces the file only when the content changed. It uploads the new file
+    under a temporary name first, then renames it.
+12. Older releases stay public in both repositories. CI does not change them.
+13. CI dispatches `halv-release-published` to `WEBSITE_REPOSITORY`. The website
     refreshes its checked-in fallback metadata and Cloudflare redeploys it,
     while the live page also reads the newest complete release directly from
     GitHub for immediate version, size, filename, and direct-installer links.
-11. Clients check the GitHub Releases `latest.json`, download the matching signed artifact, install it, and relaunch.
+14. Clients check the GitHub Releases `latest.json`, download the matching signed artifact, install it, and relaunch.
+
+If the publish job fails after publication, for example because
+`RELEASE_REPO_TOKEN` expired, fix the cause and re-run the failed job. For a
+published release, the job checks the latest mark, does the
+`pedr0v/halv-releases` step, and sends the website dispatch again. If the job
+fails before publication, a re-run replaces `latest.json`, the SBOMs, and
+`SHA256SUMS` on the draft. The SBOM workflow artifacts stay for 30 days. After
+that time, a re-run of only the publish job fails. Then re-run all jobs.
 
 Create an active tag ruleset for `v*` that lets only release operators create tags and prevents everyone from updating or deleting them; do not grant the generic GitHub Actions app a bypass. The workflow never creates tags and no longer runs from tag-push content; `repository_dispatch` always uses the workflow on the default branch.
+Because the ruleset blocks a move of the tag, a fix that needs a new `main`
+commit after you pushed the tag needs a new patch version.
 
-If updater signing secrets are missing, CI leaves the release as a draft and does not publish `latest.json`.
+If updater signing secrets are missing, the build fails, the release stays a draft, and CI does not publish `latest.json`.
+
+## Verify a release
+
+Each release in `halv-ai/halv` has these verification assets:
+
+- `SHA256SUMS`: the SHA-256 of each other asset, in `sha256sum` format. CI
+  writes it from the assets that it downloads from the draft after all
+  uploads.
+- `runtime-files-<target>.sha256.json` and
+  `runtime-files-<target>.signed.sha256.json` for each of the four targets.
+  `REPRODUCING.md` tells how to compare a rebuild with them.
+- `sbom-halv-app.cdx.json`: a CycloneDX SBOM of the Rust crates and npm
+  packages of the app.
+- `sbom-headroom-runtime-<target>.cdx.json`: a CycloneDX SBOM of the staged
+  Headroom runtime of each target.
+- A GitHub build provenance attestation for the installers, the updater
+  archives, the runtime manifests, the SBOMs, and `SHA256SUMS`.
+
+To check a release, do these steps:
+
+1. Download the assets. To get only some files, add `-p <pattern>` for each
+   file and `-p SHA256SUMS`:
+
+   ```sh
+   gh release download v1.0.2 -R halv-ai/halv -D halv-v1.0.2
+   cd halv-v1.0.2
+   ```
+
+2. Check each file against `SHA256SUMS`. On macOS, use `shasum -a 256` instead
+   of `sha256sum`. `--ignore-missing` skips the files that you did not
+   download:
+
+   ```sh
+   sha256sum --ignore-missing -c SHA256SUMS
+   ```
+
+3. Check the attestation of `SHA256SUMS` and of each file that you use:
+
+   ```sh
+   gh attestation verify SHA256SUMS -R halv-ai/halv \
+     --signer-workflow halv-ai/halv/.github/workflows/build.yml
+   gh attestation verify Halv_1.0.2_aarch64.dmg -R halv-ai/halv \
+     --signer-workflow halv-ai/halv/.github/workflows/build.yml
+   ```
+
+The `.sig` files and `latest.json` have no attestation of their own.
+`SHA256SUMS` lists them, and `SHA256SUMS` has an attestation.
+
+### What the runtime manifests describe
+
+The runtime manifests describe the Headroom runtime folder of the build job:
+
+- `runtime-files-<target>.sha256.json` describes the runtime before code
+  signing.
+- `runtime-files-<target>.signed.sha256.json` describes the runtime after
+  code signing. `scripts/sign-headroom-runtime.mjs` writes it before Tauri
+  bundles the runtime. On macOS with the signing secrets, this script signs
+  each Mach-O file. On Linux, on Windows, and in an unsigned macOS build, it
+  signs nothing and writes `"signing": "none"`.
+
+On macOS, Tauri signs the app bundle, and the runtime files keep their bytes.
+On Linux, Tauri does not sign the runtime files.
+
+On Windows with Windows Artifact Signing on, Tauri signs each unsigned `.exe`
+and `.dll` file of the runtime folder in place while it builds the MSI. Then
+the build step "Write the signed Windows runtime manifest after Tauri signing"
+writes `runtime-files-x86_64-pc-windows-msvc.signed.sha256.json` again from
+the runtime folder, with `"signing": "authenticode"`. The step shows a warning
+when Tauri changed other files. The copy of `runtime-files.signed.sha256.json`
+inside the MSI is from before the build and keeps `"signing": "none"`. Without
+Windows Artifact Signing, Tauri does not sign the runtime files.
+
+Known gap: when the AppImage tool assembles the AppImage, it can rewrite the
+run path of ELF files under `usr/lib`. Then files in the AppImage differ from
+the signed manifest. No such change is known for the DMG, DEB, RPM, or MSI.
+
+The build step "Compare bundled Headroom runtimes with the release manifest"
+checks these claims for each release. It extracts each bundle and compares its
+runtime with the signed manifest. It writes the result to the job summary and
+does not stop the release. Read the result before you tell users that a bundle
+matches its manifest.
 
 ## 4. macOS signing and notarization
 
@@ -166,7 +407,7 @@ for the certificate limitation and SmartScreen behavior.
 ## 6. Frozen Headroom fork
 
 Halv does not install `headroom-ai` from PyPI on customer devices. Each release
-checks out the private fork at the full Git SHA in
+checks out the public fork `halv-ai/headroom` at the full Git SHA in
 `scripts/headroom-runtime.lock.json`, verifies its `pyproject.toml` version and
 `uv.lock` SHA-256, and creates a PyInstaller onedir runtime on the native target.
 The complete directory is bundled as a Tauri resource, including Python,
@@ -183,7 +424,7 @@ stored in the cache. Changing any frozen-runtime input creates a new cache.
 
 To update the fork coupled to Halv:
 
-1. Push the intended Headroom commit to `pedr0v/headroom`; release CI cannot
+1. Push the intended Headroom commit to `halv-ai/headroom`; release CI cannot
    build a local-only commit.
 2. Update the commit, versions, and `uv.lock` digest in
    `scripts/headroom-runtime.lock.json`.

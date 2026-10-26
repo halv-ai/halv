@@ -19,6 +19,12 @@ const MAX_AUTOMATIONS: usize = 100;
 const MAX_RUN_HISTORY: usize = 50;
 const MAX_PROMPT_BYTES: usize = 64 * 1024;
 const MAX_RRULE_BYTES: usize = 512;
+/// Cloud handoff posts the prompt, the repository URL, the base ref, the
+/// model and the effort to halv.ai. No worker runs these tasks yet, so the
+/// handoff stays off until one exists (ADR 0023). The code stays for later.
+/// It matches `CLOUD_HANDOFF_ENABLED` in `src/components/AutomationsPanel.tsx`.
+const CLOUD_HANDOFF_ENABLED: bool = false;
+const CLOUD_HANDOFF_UNAVAILABLE: &str = "Cloud handoff not available";
 type AutomationResult<T> = Result<T, String>;
 
 fn default_timezone() -> String {
@@ -190,7 +196,10 @@ impl AutomationManager {
     fn claim_due(&self, now: DateTime<Utc>) -> AutomationResult<Vec<Automation>> {
         self.update(|automations| {
             let mut due = Vec::new();
-            for automation in automations.iter_mut().filter(|item| item.enabled) {
+            for automation in automations
+                .iter_mut()
+                .filter(|item| item.enabled && !cloud_handoff_paused(&item.target))
+            {
                 let next = DateTime::parse_from_rfc3339(&automation.next_run_at)
                     .map_err(|_| {
                         format!("automation `{}` has an invalid schedule", automation.name)
@@ -357,6 +366,10 @@ pub async fn automation_upsert(
             .as_deref()
             .and_then(|id| automations.iter().find(|automation| automation.id == id))
             .cloned();
+        check_cloud_target(
+            &draft.target,
+            existing.as_ref().map(|automation| &automation.target),
+        )?;
         let rrule = normalize_rrule(draft.rrule.as_deref())?;
         let created_at = existing
             .as_ref()
@@ -466,6 +479,9 @@ pub async fn automation_run_now(
             .iter_mut()
             .find(|automation| automation.id == automation_id)
             .ok_or_else(|| "automation was not found".to_string())?;
+        if cloud_handoff_paused(&automation.target) {
+            return Err(CLOUD_HANDOFF_UNAVAILABLE.to_string());
+        }
         automation.enabled = true;
         automation.next_run_at = Utc::now().to_rfc3339();
         automation.updated_at = Utc::now().to_rfc3339();
@@ -572,7 +588,35 @@ fn trim_run_history(runs: &mut Vec<AutomationRun>) {
     }
 }
 
+/// True for a cloud automation while cloud handoff is off. The scheduler
+/// skips it and the panel shows it as paused.
+fn cloud_handoff_paused(target: &AutomationTarget) -> bool {
+    *target == AutomationTarget::Cloud && !CLOUD_HANDOFF_ENABLED
+}
+
+/// Refuses every handoff while it is off, before any network call.
+fn cloud_handoff_guard() -> AutomationResult<()> {
+    if CLOUD_HANDOFF_ENABLED {
+        Ok(())
+    } else {
+        Err(CLOUD_HANDOFF_UNAVAILABLE.to_string())
+    }
+}
+
+/// While cloud handoff is off, a draft can keep the cloud target of an
+/// existing automation, but no automation can move to it.
+fn check_cloud_target(
+    target: &AutomationTarget,
+    existing: Option<&AutomationTarget>,
+) -> AutomationResult<()> {
+    if cloud_handoff_paused(target) && existing != Some(&AutomationTarget::Cloud) {
+        return Err(CLOUD_HANDOFF_UNAVAILABLE.to_string());
+    }
+    Ok(())
+}
+
 async fn enqueue_cloud_task(app: &AppHandle, automation: &Automation) -> AutomationResult<String> {
+    cloud_handoff_guard()?;
     let repository_url = automation
         .repository_url
         .clone()
@@ -1095,5 +1139,101 @@ mod tests {
         assert!(validate_draft(&automation)
             .expect_err("incompatible routing should fail")
             .contains("cannot create a new worktree"));
+    }
+
+    fn automation(target: &str, enabled: bool, next_run_at: &str) -> Automation {
+        serde_json::from_value::<Automation>(json!({
+            "id": format!("automation-{target}"),
+            "name": "Nightly review",
+            "prompt": "Review the repository",
+            "projectId": 1,
+            "workspaceId": null,
+            "model": "gpt-5.5",
+            "effort": "medium",
+            "target": target,
+            "repositoryUrl": "https://github.com/example/repo",
+            "baseRef": null,
+            "cadenceMinutes": 1440,
+            "enabled": enabled,
+            "nextRunAt": next_run_at,
+            "lastRunAt": null,
+            "lastStatus": null,
+            "lastError": null,
+            "cloudTaskId": null,
+            "createdAt": "2026-07-13T00:00:00Z",
+            "updatedAt": "2026-07-13T00:00:00Z"
+        }))
+        .expect("automation should deserialize")
+    }
+
+    #[test]
+    fn cloud_handoff_is_off_and_refuses_before_any_network_call() {
+        // The guard runs first in `enqueue_cloud_task`, before the session
+        // read and the request, so no network call can follow it.
+        assert_eq!(
+            cloud_handoff_guard(),
+            Err("Cloud handoff not available".to_string())
+        );
+        assert!(cloud_handoff_paused(&AutomationTarget::Cloud));
+        assert!(!cloud_handoff_paused(&AutomationTarget::Local));
+    }
+
+    #[test]
+    fn no_automation_can_move_to_cloud_handoff_while_it_is_off() {
+        assert!(check_cloud_target(&AutomationTarget::Local, None).is_ok());
+        assert!(
+            check_cloud_target(&AutomationTarget::Local, Some(&AutomationTarget::Cloud)).is_ok()
+        );
+        assert_eq!(
+            check_cloud_target(&AutomationTarget::Cloud, None),
+            Err("Cloud handoff not available".to_string())
+        );
+        assert!(
+            check_cloud_target(&AutomationTarget::Cloud, Some(&AutomationTarget::Local)).is_err()
+        );
+        // An existing cloud automation keeps its target on an edit.
+        assert!(
+            check_cloud_target(&AutomationTarget::Cloud, Some(&AutomationTarget::Cloud)).is_ok()
+        );
+    }
+
+    #[test]
+    fn the_scheduler_skips_a_due_cloud_automation_while_handoff_is_off() {
+        let directory = std::env::temp_dir().join(format!(
+            "halv-automations-cloud-{}",
+            crate::storage::new_uuid_v4()
+        ));
+        let manager = AutomationManager::default();
+        manager
+            .set_app_data_dir(directory.clone())
+            .expect("data dir");
+        let due = "2026-07-13T00:00:00Z";
+        manager
+            .update(|automations| {
+                automations.push(automation("cloud", true, due));
+                automations.push(automation("local", true, due));
+                Ok(())
+            })
+            .expect("seed automations");
+        let claimed = manager
+            .claim_due(parse_rfc3339_utc("2026-07-14T00:00:00Z").unwrap())
+            .expect("claim due automations");
+        assert_eq!(
+            claimed
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["automation-local"]
+        );
+        manager.read(|automations| {
+            let cloud = automations
+                .iter()
+                .find(|item| item.target == AutomationTarget::Cloud)
+                .expect("cloud automation");
+            assert!(cloud.runs.is_empty());
+            assert_eq!(cloud.last_status, None);
+            assert_eq!(cloud.next_run_at, due);
+        });
+        let _ = fs::remove_dir_all(directory);
     }
 }

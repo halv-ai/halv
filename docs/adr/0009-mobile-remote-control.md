@@ -40,7 +40,7 @@ Halv needs a smaller design.
 
 1. **Relay.** A Cloudflare Worker and one Durable Object for each desktop host.
    The object uses SQLite storage and the WebSocket Hibernation API.
-   The relay source is not in this repository.
+   The relay source is private. The public repository does not include it.
    The desktop and the phone both dial out to the relay over WSS.
    The relay forwards opaque frames and never decrypts them.
 2. **Shared crate.** `crates/halv-remote` contains the protocol code without a Tauri dependency:
@@ -53,7 +53,7 @@ Halv needs a smaller design.
    The gateway is off by default.
    The user turns it on in Settings > Mobile.
 4. **Phone app.** A separate Tauri 2 mobile project, with the identifier `ai.halv.mobile`.
-   The phone app source is not in this repository.
+   The phone app source is private. The public repository does not include it.
    The UI uses React and xterm.js, like the desktop.
    The Rust core uses the client engine of the shared crate.
 

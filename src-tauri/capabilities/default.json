@@ -130,6 +130,7 @@
     "allow-preferences-set-task-routing",
     "allow-preferences-set-worker-lane",
     "allow-preferences-set-workflow-routing",
+    "allow-preferences-set-brief-sharing",
     "allow-preferences-set-claude-ultracode",
     "allow-preferences-set-show-dot-shortcut",
     "allow-preferences-set-routing-tier-agents",

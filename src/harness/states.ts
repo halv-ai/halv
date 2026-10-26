@@ -59,6 +59,9 @@ export const FEATURE_STATE_NAMES = [
   "account-swap-dark",
   "account-swap-light",
   "account-rotation-busy-dark",
+  "brief-sharing-prompt-dark",
+  "brief-sharing-card-dark",
+  "brief-sharing-settings-dark",
 ] as const;
 
 export type FeatureStateName = (typeof FEATURE_STATE_NAMES)[number];
@@ -129,6 +132,9 @@ export type HarnessFixtureConfig = {
   // Adds three agents of project 1: a read finished turn, a pane without a
   // signal, and a failed turn (the agent glyph specs).
   glyphShowcase?: boolean;
+  // The answer to the task brief question (ADR 0023). Absent: a fresh
+  // scenario has no answer, other scenarios allowed briefs.
+  briefSharing?: "unset" | "allowed" | "declined";
 };
 
 export type HarnessBootstrapAction =
@@ -149,7 +155,11 @@ export type HarnessBootstrapAction =
   | "open-agent-sessions"
   | "open-savings"
   | "open-status-bar-wallet"
-  | "open-agent-status";
+  | "open-agent-status"
+  // ADR 0023: a launch that the user started, or one without a user action.
+  | "open-brief-sharing-prompt"
+  | "open-brief-sharing-card"
+  | "open-jev-settings";
 
 export type HarnessStateDefinition = {
   fixture: HarnessFixtureConfig;
@@ -611,6 +621,30 @@ export const HARNESS_STATES = {
     bootstrap: "none",
     readyText: null,
     theme: "light",
+  },
+  // ADR 0023: the task brief question before a launch that the user started.
+  "brief-sharing-prompt-dark": {
+    fixture: { ...RUNNING_FIXTURE, briefSharing: "unset" },
+    onboarding: "dismissed",
+    bootstrap: "open-brief-sharing-prompt",
+    readyText: "Send task briefs to Halv?",
+    theme: "dark",
+  },
+  // ADR 0023: the task brief card after a session restore.
+  "brief-sharing-card-dark": {
+    fixture: { ...RUNNING_FIXTURE, briefSharing: "unset" },
+    onboarding: "dismissed",
+    bootstrap: "open-brief-sharing-card",
+    readyText: "Send task briefs to Halv?",
+    theme: "dark",
+  },
+  // ADR 0023: Settings, JEV before the user answered the question.
+  "brief-sharing-settings-dark": {
+    fixture: { ...RUNNING_FIXTURE, briefSharing: "unset" },
+    onboarding: "dismissed",
+    bootstrap: "open-jev-settings",
+    readyText: "Not decided yet",
+    theme: "dark",
   },
   // The Claude account near its limit while two Claude panes are busy.
   "account-rotation-busy-dark": {

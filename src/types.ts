@@ -233,6 +233,12 @@ export type AnalyticsConsentAsked = 0 | 1 | 2;
 /** The download id of the site link that led to this install (ADR 0021). */
 export type AnalyticsAttribution = { downloadId: string | null };
 
+/**
+ * The answer to the task brief question (ADR 0023). JEV task routing sends
+ * each task brief to halv.ai. Halv sends a brief only for `allowed`.
+ */
+export type BriefSharing = "unset" | "allowed" | "declined";
+
 export type AppPreferences = {
   subagentConcurrencyLimit: number | null;
   completionNotifications: "never" | "background" | "always";
@@ -273,6 +279,11 @@ export type AppPreferences = {
   routingTierAgents: RoutingTierAgents;
   /** JEV routes the agents of a Claude Code Workflow script (ADR 0014). */
   workflowRouting: boolean;
+  /**
+   * Task briefs leave the device only for `allowed` (ADR 0023). Until then,
+   * a session starts without routing.
+   */
+  briefSharing: BriefSharing;
   /** New Claude panes start with ultracode on. */
   claudeUltracode: boolean;
   /** Shows the Dot pin and the Dot commands. Off by default. */

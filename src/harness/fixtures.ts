@@ -73,8 +73,8 @@ export const RUNNING_SIDECAR: SidecarStatus = {
   state: "running",
   spawnedByUs: true,
   managedByHalv: true,
-  version: "0.35.0-dev+halv.g9804a95707ef",
-  pinnedVersion: "0.35.0-dev+halv.g9804a95707ef",
+  version: "0.42.0-dev+halv.g284912cf4f65",
+  pinnedVersion: "0.42.0-dev+halv.g284912cf4f65",
   port: 8787,
   optimizationPaused: false,
 };

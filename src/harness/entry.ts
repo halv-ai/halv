@@ -22,6 +22,7 @@ import type {
   TerminalSession,
 } from "../types";
 import { installUxAuditHarness } from "./mock-ipc.ts";
+import { briefSharingGate } from "../briefSharingGate.ts";
 import {
   AGENT_STATUS_SESSION_IDS,
   prepareAgentStatusStorage,
@@ -390,6 +391,31 @@ async function bootstrapState(
         await clickTerminalRow(openingTitle);
       }
       await waitForAgentStatusPanes();
+      return;
+    }
+    case "open-jev-settings":
+      await openSettings();
+      await clickElement("JEV", "starts-with");
+      return;
+    case "open-brief-sharing-prompt":
+    case "open-brief-sharing-card": {
+      // The gate asks only after the account status loaded.
+      await waitFor(() => briefSharingGate.accessKnown());
+      // A recent click makes the launch one that the user started. An old
+      // one makes it a launch without a user action, like a restore.
+      briefSharingGate.noteUserInput(
+        action === "open-brief-sharing-prompt"
+          ? Date.now()
+          : Number.NEGATIVE_INFINITY,
+      );
+      void briefSharingGate.beforeLaunch("agent_terminal_create", {
+        agentKind: "claude",
+      });
+      await waitForElement(
+        action === "open-brief-sharing-prompt"
+          ? '[data-testid="brief-sharing-prompt"]'
+          : '[data-testid="brief-sharing-card"]',
+      );
       return;
     }
     case "open-status-bar-wallet": {
