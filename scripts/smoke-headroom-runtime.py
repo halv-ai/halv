@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -89,6 +90,42 @@ def runtime_path(argument: str) -> Path:
     return path
 
 
+def runtime_file_digests(root: Path) -> dict[str, str]:
+    """Return a SHA-256 digest of each file under the runtime folder."""
+    digests: dict[str, str] = {}
+    for folder, directories, names in os.walk(root):
+        for name in directories + names:
+            path = Path(folder) / name
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                digests[relative] = f"link:{os.readlink(path)}"
+            elif path.is_file():
+                digest = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1 << 20), b""):
+                        digest.update(chunk)
+                digests[relative] = digest.hexdigest()
+    return digests
+
+
+def check_runtime_unchanged(root: Path, before: dict[str, str]) -> int:
+    """Fail if a run changed, added, or removed a file in the runtime folder."""
+    after = runtime_file_digests(root)
+    changes = {
+        "changed": [name for name in before if name in after and before[name] != after[name]],
+        "added": [name for name in after if name not in before],
+        "removed": [name for name in before if name not in after],
+    }
+    problems = [
+        f"{label} {len(names)}: {', '.join(sorted(names))}"
+        for label, names in changes.items()
+        if names
+    ]
+    if problems:
+        raise RuntimeError(f"the runtime changed its own files ({'; '.join(problems)})")
+    return len(before)
+
+
 def check_offline_data(runtime: Path) -> str:
     """Run the frozen offline self-check and inspect the bundled license index."""
     # Parent values that would turn the offline data and the HF pins off. The
@@ -97,6 +134,9 @@ def check_offline_data(runtime: Path) -> str:
         **os.environ,
         "HEADROOM_HF_PIN": "off",
         "TIKTOKEN_CACHE_DIR": str(Path(tempfile.gettempdir()) / "halv-smoke-no-tiktoken-cache"),
+        "CUSTOM_TIKTOKEN_CACHE_DIR": str(
+            Path(tempfile.gettempdir()) / "halv-smoke-no-custom-tiktoken-cache"
+        ),
         "LITELLM_LOCAL_MODEL_COST_MAP": "False",
     }
     result = subprocess.run(
@@ -119,6 +159,13 @@ def check_offline_data(runtime: Path) -> str:
     cache_dir = Path(str(env.get("TIKTOKEN_CACHE_DIR") or ""))
     if not cache_dir.is_dir() or runtime.parent.resolve() not in cache_dir.resolve().parents:
         raise RuntimeError(f"tiktoken cache is not the bundled one: {cache_dir}")
+    # LiteLLM uses its own tokenizers folder unless this variable names the
+    # bundled folder. The Windows wheel of LiteLLM has CRLF files in that folder.
+    if env.get("CUSTOM_TIKTOKEN_CACHE_DIR") != env.get("TIKTOKEN_CACHE_DIR"):
+        raise RuntimeError(
+            "LiteLLM does not use the bundled tiktoken cache: CUSTOM_TIKTOKEN_CACHE_DIR is "
+            f"{env.get('CUSTOM_TIKTOKEN_CACHE_DIR')!r}, not {str(cache_dir)!r}"
+        )
     if env.get("LITELLM_LOCAL_MODEL_COST_MAP") != "True":
         raise RuntimeError("LiteLLM does not use its local model cost map")
     if env.get("HEADROOM_HF_PIN") != "on":
@@ -163,6 +210,9 @@ def main() -> int:
         print("usage: smoke-headroom-runtime.py <runtime executable or onedir>", file=sys.stderr)
         return 2
     runtime = runtime_path(sys.argv[1])
+    # The runtime must not change a file in its own folder. The release file
+    # manifest would not match after such a change.
+    files_before = runtime_file_digests(runtime.parent)
     version = subprocess.run(
         [str(runtime), "--version"],
         check=True,
@@ -311,7 +361,7 @@ def main() -> int:
                         f"{code_aware!r}"
                     )
 
-                print(
+                result_line = (
                     f"PASS {version}: first /v1/responses input {original_size} -> "
                     f"{forwarded_size} bytes; /stats saved={int(saved)}; Code-Aware loaded; "
                     f"{offline_summary}"
@@ -330,6 +380,8 @@ def main() -> int:
                 upstream.shutdown()
                 upstream.server_close()
                 upstream_thread.join(timeout=5)
+    unchanged = check_runtime_unchanged(runtime.parent, files_before)
+    print(f"{result_line}; {unchanged} runtime files unchanged")
     return 0
 
 

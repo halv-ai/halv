@@ -911,9 +911,15 @@ test("the frozen entry point keeps offline data, telemetry defaults, and HF pins
   const spec = readFileSync(join(ROOT, "scripts", "headroom-runtime", "headroom-runtime.spec"), "utf8");
   // The offline data and the HF pins replace parent values.
   assert.match(entry, /os\.environ\["TIKTOKEN_CACHE_DIR"\] = str\(_TIKTOKEN_CACHE\)/);
+  // LiteLLM changes TIKTOKEN_CACHE_DIR to its own folder, with CRLF files in the
+  // Windows wheel, unless CUSTOM_TIKTOKEN_CACHE_DIR names the bundled folder.
+  assert.match(entry, /os\.environ\["CUSTOM_TIKTOKEN_CACHE_DIR"\] = str\(_TIKTOKEN_CACHE\)/);
   assert.match(entry, /os\.environ\["LITELLM_LOCAL_MODEL_COST_MAP"\] = "True"/);
   assert.match(entry, /os\.environ\["HEADROOM_HF_PIN"\] = "on"/);
-  assert.doesNotMatch(entry, /setdefault\("(TIKTOKEN_CACHE_DIR|LITELLM_LOCAL_MODEL_COST_MAP|HEADROOM_HF_PIN)"/);
+  assert.doesNotMatch(
+    entry,
+    /setdefault\("(TIKTOKEN_CACHE_DIR|CUSTOM_TIKTOKEN_CACHE_DIR|LITELLM_LOCAL_MODEL_COST_MAP|HEADROOM_HF_PIN)"/,
+  );
   // The telemetry defaults stay.
   assert.match(entry, /os\.environ\.setdefault\("HEADROOM_BEACON", "off"\)/);
   assert.match(entry, /os\.environ\.setdefault\("DO_NOT_TRACK", "1"\)/);
@@ -930,9 +936,31 @@ test("the frozen entry point keeps offline data, telemetry defaults, and HF pins
     "the malloc marker must be set before the proxy imports Headroom",
   );
   assert.match(entry, /--offline-self-check/);
+  // The self-check imports the LiteLLM module that sets TIKTOKEN_CACHE_DIR
+  // before it reads the environment or loads an encoding, as the proxy does.
+  const selfCheck = entry.slice(entry.indexOf("def _offline_self_check"), entry.indexOf("def main"));
+  const litellmImport = selfCheck.indexOf("import litellm.litellm_core_utils.default_encoding");
+  assert.ok(litellmImport > -1, "the self-check must import the LiteLLM default_encoding module");
+  assert.ok(litellmImport < selfCheck.indexOf('report["env"]'));
+  assert.ok(litellmImport < selfCheck.indexOf("import tiktoken"));
+  assert.match(selfCheck, /"CUSTOM_TIKTOKEN_CACHE_DIR",/);
+  assert.match(selfCheck, /os\.environ\.get\(key\) != str\(_TIKTOKEN_CACHE\)/);
   assert.match(spec, /\(str\(LICENSES_DIR\), "licenses\/python"\)/);
   assert.match(spec, /\(str\(TIKTOKEN_DIR\), "tiktoken-cache"\)/);
   assert.match(spec, /normalize_metadata_toc\(/);
+});
+
+test("the smoke test replaces CUSTOM_TIKTOKEN_CACHE_DIR and guards the runtime files", () => {
+  const smoke = readFileSync(join(ROOT, "scripts", "smoke-headroom-runtime.py"), "utf8");
+  // The parent values of both variables must not reach LiteLLM.
+  assert.match(smoke, /"TIKTOKEN_CACHE_DIR": str\(/);
+  assert.match(smoke, /"CUSTOM_TIKTOKEN_CACHE_DIR": str\(/);
+  assert.match(smoke, /env\.get\("CUSTOM_TIKTOKEN_CACHE_DIR"\) != env\.get\("TIKTOKEN_CACHE_DIR"\)/);
+  // The runtime must leave its files as they were before the smoke test.
+  const main = smoke.slice(smoke.indexOf("def main()"));
+  assert.ok(main.indexOf("runtime_file_digests(") < main.indexOf("check_offline_data(runtime)"));
+  assert.ok(main.indexOf("check_offline_data(runtime)") < main.indexOf("check_runtime_unchanged("));
+  assert.ok(main.indexOf("check_runtime_unchanged(") < main.indexOf("print(f\"{result_line}"));
 });
 
 function findPython() {
@@ -948,6 +976,67 @@ function findPython() {
 }
 
 const PYTHON = findPython();
+
+test(
+  "the smoke test names a runtime file that a run changed, added, or removed",
+  { skip: PYTHON ? false : "no Python 3.9+ on PATH" },
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "halv-smoke-guard-test-"));
+    try {
+      const runtime = join(root, "runtime");
+      mkdirSync(join(runtime, "_internal", "litellm", "tokenizers"), { recursive: true });
+      mkdirSync(join(runtime, "_internal", "tiktoken-cache"), { recursive: true });
+      const crlfFile = join(runtime, "_internal", "litellm", "tokenizers", "9b5ad71b");
+      const cacheFile = join(runtime, "_internal", "tiktoken-cache", "9b5ad71b");
+      writeFileSync(crlfFile, "line\r\nline\r\n");
+      writeFileSync(cacheFile, "line\nline\n");
+      writeFileSync(join(runtime, "headroom-runtime"), "binary");
+      const script = [
+        "import importlib.util, json, sys",
+        "from pathlib import Path",
+        "spec = importlib.util.spec_from_file_location('smoke', sys.argv[1])",
+        "smoke = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(smoke)",
+        "root = Path(sys.argv[2])",
+        "before = smoke.runtime_file_digests(root)",
+        "crlf = root / '_internal' / 'litellm' / 'tokenizers' / '9b5ad71b'",
+        "extra = root / 'extra.bin'",
+        "binary = root / 'headroom-runtime'",
+        "def attempt():",
+        "    try:",
+        "        return smoke.check_runtime_unchanged(root, before)",
+        "    except RuntimeError as error:",
+        "        return str(error)",
+        "out = {'files': len(before), 'unchanged': attempt()}",
+        // The failure of the Windows release: tiktoken replaces a CRLF file with an LF file.
+        "original = crlf.read_bytes()",
+        "crlf.write_bytes(original.replace(b'\\r\\n', b'\\n'))",
+        "out['changed'] = attempt()",
+        "crlf.write_bytes(original)",
+        "extra.write_text('x')",
+        "out['added'] = attempt()",
+        "extra.unlink()",
+        "binary.unlink()",
+        "out['removed'] = attempt()",
+        "print(json.dumps(out))",
+      ].join("\n");
+      const result = spawnSync(
+        PYTHON,
+        ["-I", "-B", "-c", script, join(ROOT, "scripts", "smoke-headroom-runtime.py"), runtime],
+        { encoding: "utf8" },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      const out = JSON.parse(result.stdout);
+      assert.equal(out.files, 3);
+      assert.equal(out.unchanged, 3);
+      assert.match(out.changed, /changed 1: _internal\/litellm\/tokenizers\/9b5ad71b\)/);
+      assert.match(out.added, /added 1: extra\.bin\)/);
+      assert.match(out.removed, /removed 1: headroom-runtime\)/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "metadata normalization removes build paths and install times from dist-info",

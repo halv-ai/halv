@@ -53,9 +53,14 @@ os.environ.setdefault("HEADROOM_UPDATE_CHECK", "off")
 # runtime, so token counting does not download them. LiteLLM reads its bundled
 # model cost map instead of fetching it from GitHub at import time. These
 # values replace a value from the parent environment.
+#
+# LiteLLM points TIKTOKEN_CACHE_DIR at its own tokenizers folder unless
+# CUSTOM_TIKTOKEN_CACHE_DIR is set. On Windows, that folder holds CRLF copies
+# that fail the tiktoken hash check, so tiktoken downloads them again.
 _TIKTOKEN_CACHE = _support_dir() / TIKTOKEN_CACHE_NAME
 if _TIKTOKEN_CACHE.is_dir():
     os.environ["TIKTOKEN_CACHE_DIR"] = str(_TIKTOKEN_CACHE)
+    os.environ["CUSTOM_TIKTOKEN_CACHE_DIR"] = str(_TIKTOKEN_CACHE)
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 
 # The fork pins each HuggingFace model download to a commit SHA. The bundled
@@ -120,20 +125,36 @@ def _offline_self_check() -> int:
     socket.socket.connect = lambda self, *args: blocked(*args)  # type: ignore[method-assign]
     socket.socket.connect_ex = lambda self, *args: blocked(*args)  # type: ignore[method-assign]
 
-    report: dict[str, object] = {
-        "env": {
-            key: os.environ.get(key)
-            for key in (
-                "TIKTOKEN_CACHE_DIR",
-                "LITELLM_LOCAL_MODEL_COST_MAP",
-                "HEADROOM_HF_PIN",
-                "HEADROOM_BEACON",
-                "DO_NOT_TRACK",
-                "HEADROOM_UPDATE_CHECK",
-            )
-        }
-    }
+    report: dict[str, object] = {}
     failures: list[str] = []
+
+    # The proxy imports litellm.litellm_core_utils.default_encoding the first
+    # time LiteLLM counts tokens. The import can change TIKTOKEN_CACHE_DIR, so
+    # run it first, with the network blocked.
+    try:
+        import litellm.litellm_core_utils.default_encoding
+
+        report["litellmModelCostEntries"] = len(getattr(litellm, "model_cost", {}) or {})
+        if not report["litellmModelCostEntries"]:
+            failures.append("litellm loaded an empty model cost map")
+    except Exception as error:  # noqa: BLE001 - reported to the caller
+        failures.append(f"litellm: {type(error).__name__}: {error}")
+
+    report["env"] = {
+        key: os.environ.get(key)
+        for key in (
+            "TIKTOKEN_CACHE_DIR",
+            "CUSTOM_TIKTOKEN_CACHE_DIR",
+            "LITELLM_LOCAL_MODEL_COST_MAP",
+            "HEADROOM_HF_PIN",
+            "HEADROOM_BEACON",
+            "DO_NOT_TRACK",
+            "HEADROOM_UPDATE_CHECK",
+        )
+    }
+    for key in ("TIKTOKEN_CACHE_DIR", "CUSTOM_TIKTOKEN_CACHE_DIR"):
+        if os.environ.get(key) != str(_TIKTOKEN_CACHE):
+            failures.append(f"{key} is {os.environ.get(key)!r}, not the bundled tiktoken cache")
 
     import tiktoken
 
@@ -144,15 +165,6 @@ def _offline_self_check() -> int:
         except Exception as error:  # noqa: BLE001 - reported to the caller
             failures.append(f"tiktoken {name}: {type(error).__name__}: {error}")
     report["tiktoken"] = encodings
-
-    try:
-        import litellm
-
-        report["litellmModelCostEntries"] = len(getattr(litellm, "model_cost", {}) or {})
-        if not report["litellmModelCostEntries"]:
-            failures.append("litellm loaded an empty model cost map")
-    except Exception as error:  # noqa: BLE001 - reported to the caller
-        failures.append(f"litellm: {type(error).__name__}: {error}")
 
     from headroom import onnx_runtime
 
