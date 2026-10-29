@@ -346,9 +346,19 @@ Known differences:
 
 The runtime contains the tiktoken encodings that Headroom uses (`cl100k_base`,
 `o200k_base`, `p50k_base`, `r50k_base`) in `_internal/tiktoken-cache`, and the
-LiteLLM model cost map. `entry.py` sets `TIKTOKEN_CACHE_DIR` to that folder
-and `LITELLM_LOCAL_MODEL_COST_MAP=True`. These values replace values from the
+LiteLLM model cost map. `entry.py` sets `TIKTOKEN_CACHE_DIR` and
+`CUSTOM_TIKTOKEN_CACHE_DIR` to that folder and
+`LITELLM_LOCAL_MODEL_COST_MAP=True`. These values replace values from the
 parent environment, so neither file downloads at run time.
+
+LiteLLM points `TIKTOKEN_CACHE_DIR` at its own folder
+`_internal/litellm/litellm_core_utils/tokenizers`, unless
+`CUSTOM_TIKTOKEN_CACHE_DIR` is set. The Windows wheel of LiteLLM 1.101.0 has
+CRLF copies of the encoding files in that folder. These copies fail the tiktoken
+hash check, so tiktoken would download them again into the runtime folder.
+The CRLF copies stay in the Windows runtime, and nothing reads them.
+`scripts/smoke-headroom-runtime.py` fails if a run changes, adds, or removes a
+file in the runtime folder.
 
 Some features download models from Hugging Face on first use, into
 `HF_HOME` (default `~/.cache/huggingface`). The fork pins each download to a
