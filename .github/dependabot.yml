@@ -35,3 +35,9 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # pnpm/action-setup v6.1.0 bootstraps pnpm 11.25.0 and then fails to switch
+      # to the pinned 11.0.9 on macos-15-intel (ERR_PNPM_PNPM_ENGINE_IDENTITY_UNVERIFIABLE
+      # for @pnpm/exe.darwin-x64). Keep v6.0.9 until a fixed release ships.
+      - dependency-name: pnpm/action-setup
+        versions: ["6.1.0"]
