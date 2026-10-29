@@ -24,8 +24,11 @@ updates:
       interval: weekly
     open-pull-requests-limit: 2
     groups:
+      # Majors (crypto, tungstenite, base64, getrandom) come as separate PRs:
+      # they need interop testing with the relay and the phone app.
       cargo-remote:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: github-actions
     directory: /
