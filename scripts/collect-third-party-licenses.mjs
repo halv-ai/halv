@@ -160,10 +160,10 @@ export const EXTRA_LICENSE_TEXTS = {
   "cargo:webview2-com": { note: PUBLISHED_WITHOUT_LICENSE, texts: [WEBVIEW2_RS_TEXT] },
   "cargo:webview2-com-macros": { note: PUBLISHED_WITHOUT_LICENSE, texts: [WEBVIEW2_RS_TEXT] },
   "cargo:webview2-com-sys": {
-    versions: ["0.38.2"],
+    versions: ["0.39.1"],
     note:
       `${PUBLISHED_WITHOUT_LICENSE} On Windows with MSVC, the crate links ` +
-      "WebView2LoaderStatic.lib from the Microsoft WebView2 SDK 1.0.3650.58 " +
+      "WebView2LoaderStatic.lib from the Microsoft WebView2 SDK 1.0.3800.47 " +
       "into the app.",
     texts: [
       WEBVIEW2_RS_TEXT,
