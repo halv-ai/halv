@@ -4473,7 +4473,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/vfile/vfile-message
 - License texts: [t-ea559213e0e9](#t-ea559213e0e9) (`license`)
 
-### vite 6.4.4
+### vite 6.4.5
 
 - License: MIT
 - Source: https://github.com/vitejs/vite
