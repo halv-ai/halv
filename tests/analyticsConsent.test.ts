@@ -168,7 +168,7 @@ test("the settings variant is a checkbox that starts unchecked", () => {
   const { settings } = surfaces();
   assert.ok(settings.includes('type="checkbox"'));
   assert.ok(!settings.includes("checked"));
-  assert.ok(settings.includes("Share anonymous usage events"));
+  assert.ok(settings.includes("Share pseudonymous usage events"));
 });
 
 test("SettingsPanel can hide the disclosure to render its own", () => {
