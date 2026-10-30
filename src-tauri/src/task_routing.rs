@@ -392,9 +392,9 @@ fn newest_codex_family_model<'a>(models: &'a [CliModel], family: &str) -> Option
         let Some(version) = codex_family_version(&model.id, family) else {
             continue;
         };
-        let is_newer = newest.as_ref().map_or(true, |(_, current)| {
-            compare_versions(&version, current).is_gt()
-        });
+        let is_newer = newest
+            .as_ref()
+            .is_none_or(|(_, current)| compare_versions(&version, current).is_gt());
         if is_newer {
             newest = Some((model, version));
         }

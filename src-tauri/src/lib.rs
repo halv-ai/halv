@@ -21,6 +21,7 @@ mod external;
 pub mod host_env;
 mod local_environments;
 mod locale;
+mod lower_hex;
 mod main_window;
 mod notification_log;
 mod notification_permission;

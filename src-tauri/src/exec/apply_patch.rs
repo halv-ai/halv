@@ -546,7 +546,7 @@ pub(crate) fn fingerprint_path(path: &Path) -> Result<FileFingerprint, String> {
     }
     Ok(FileFingerprint::Regular {
         size: metadata.len(),
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: crate::lower_hex::lower_hex(&hasher.finalize()),
     })
 }
 
@@ -630,7 +630,7 @@ fn verify_snapshot_postcondition(snapshot: &FileSnapshot, target: &Path) -> Resu
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::lower_hex::lower_hex(&Sha256::digest(bytes))
 }
 
 pub fn apply_parsed_patch(

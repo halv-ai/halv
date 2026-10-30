@@ -1037,7 +1037,7 @@ async fn download_verified(
         final_total,
     );
 
-    let actual_checksum = format!("{:x}", hasher.finalize());
+    let actual_checksum = crate::lower_hex::lower_hex(&hasher.finalize());
     if !actual_checksum.eq_ignore_ascii_case(expected_checksum) {
         remove_download_file(destination.to_path_buf()).await;
         return Err(AgentCliInstallError::new(

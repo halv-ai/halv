@@ -265,7 +265,7 @@ impl TranscriptWatcherState {
                     .filter(|transcript| {
                         self.previous_modified
                             .get(&transcript.path)
-                            .map_or(true, |previous| transcript.times.modified_at > *previous)
+                            .is_none_or(|previous| transcript.times.modified_at > *previous)
                     })
                     .filter(|transcript| {
                         candidate_sessions.iter().any(|session| {
@@ -430,14 +430,14 @@ pub(crate) fn spawn_transcript_watcher(app: AppHandle, manager: AgentSessionMana
         loop {
             interval.tick().await;
             let now = Instant::now();
-            let due = last_poll.map_or(true, |last| {
-                now.saturating_duration_since(last) >= TRANSCRIPT_POLL_INTERVAL
-            }) || crate::agent_status::codex_active(&app);
+            let due = last_poll
+                .is_none_or(|last| now.saturating_duration_since(last) >= TRANSCRIPT_POLL_INTERVAL)
+                || crate::agent_status::codex_active(&app);
             if !due {
                 continue;
             }
             last_poll = Some(now);
-            let discover = last_discovery.map_or(true, |last| {
+            let discover = last_discovery.is_none_or(|last| {
                 now.saturating_duration_since(last) >= TRANSCRIPT_DISCOVERY_INTERVAL
             });
             if discover {

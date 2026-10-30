@@ -264,7 +264,7 @@ impl Graph {
                 if parent.stage != INVESTIGATION
                     || parent.status != PASSED
                     || parent.extra.get("sessionEnded") == Some(&Value::Bool(true))
-                    || parent.evidence.as_deref().map_or(true, str::is_empty)
+                    || parent.evidence.as_deref().is_none_or(str::is_empty)
                 {
                     return Err("L1 needs a completed investigation with evidence".to_string());
                 }
@@ -595,7 +595,7 @@ impl Graph {
                 let parent = self.prepared_parent(prepared)?;
                 if parent.stage != INVESTIGATION
                     || parent.status != PASSED
-                    || parent.evidence.as_deref().map_or(true, str::is_empty)
+                    || parent.evidence.as_deref().is_none_or(str::is_empty)
                     || prepared.root_task_id.as_deref() != Some(parent.root_task_id.as_str())
                 {
                     return Err("The L1 parent is no longer valid".to_string());
@@ -726,9 +726,8 @@ impl Graph {
             route.stage == L2
                 && route.root_task_id == root_task_id
                 && route.status == ROUTED
-                && parent_task_id.map_or(true, |parent| {
-                    route.parent_task_id.as_deref() == Some(parent)
-                })
+                && parent_task_id
+                    .is_none_or(|parent| route.parent_task_id.as_deref() == Some(parent))
         }) {
             for path in &route.files {
                 if active.iter().any(|other| paths_overlap(path, other)) {
@@ -793,8 +792,8 @@ fn validate_assignment(route: &HierarchyRoute) -> Result<(), String> {
         if route.action != EXECUTE_IN_PARENT || route.model.is_some() || route.effort.is_some() {
             return Err("A max route must execute in its parent".to_string());
         }
-    } else if route.model.as_deref().map_or(true, str::is_empty)
-        || route.effort.as_deref().map_or(true, str::is_empty)
+    } else if route.model.as_deref().is_none_or(str::is_empty)
+        || route.effort.as_deref().is_none_or(str::is_empty)
     {
         return Err("A worker route needs a model and effort".to_string());
     }
@@ -818,8 +817,8 @@ fn validate_worker_assignment(route: &UpstreamRoute, tier: usize) -> Result<(), 
         if route.model.is_some() || route.effort.is_some() {
             return Err("A max route must not assign a worker model".to_string());
         }
-    } else if route.model.as_deref().map_or(true, str::is_empty)
-        || route.effort.as_deref().map_or(true, str::is_empty)
+    } else if route.model.as_deref().is_none_or(str::is_empty)
+        || route.effort.as_deref().is_none_or(str::is_empty)
     {
         return Err("JEV returned no worker model or effort".to_string());
     }

@@ -610,7 +610,7 @@ fn parse_changes(output: &[u8]) -> CheckpointResult<ChangeSet> {
         created: Vec::new(),
         deleted: Vec::new(),
     };
-    for pair in fields.chunks_exact(2) {
+    for pair in fields.as_chunks::<2>().0 {
         let status = std::str::from_utf8(pair[0]).map_err(|error| {
             CheckpointError::Invalid(format!("Git returned an invalid change status: {error}"))
         })?;
