@@ -789,7 +789,7 @@ fn parse_accounts(
             entry
                 .get(runtime_key)
                 .and_then(Value::as_str)
-                .map_or(true, |runtime| runtime == "host")
+                .is_none_or(|runtime| runtime == "host")
         })
         .filter_map(|entry| {
             let text = |key: &str| {
@@ -1397,7 +1397,7 @@ impl Link {
     /// One step of the watcher. It waits for at most one tick.
     fn step(&mut self, root: &Path) {
         let process = endpoint(root)
-            .filter(|endpoint| endpoint.pid.map_or(true, process_alive))
+            .filter(|endpoint| endpoint.pid.is_none_or(process_alive))
             .map(|endpoint| (endpoint.pid, endpoint.socket));
         if process.is_none() || process != self.process {
             // Why: a new Orca gets a new token, and it can stream where the
@@ -1699,7 +1699,7 @@ fn endpoint(root: &Path) -> Option<RuntimeEndpoint> {
 
 /// True when the Orca that wrote the runtime file is still running.
 pub(super) fn running(root: &Path) -> bool {
-    endpoint(root).is_some_and(|endpoint| endpoint.pid.map_or(true, process_alive))
+    endpoint(root).is_some_and(|endpoint| endpoint.pid.is_none_or(process_alive))
 }
 
 #[cfg(unix)]

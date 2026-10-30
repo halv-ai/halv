@@ -654,7 +654,7 @@ pub(super) struct CodexAdapterState {
 
 impl CodexAdapterState {
     pub(super) fn begin_init_flush(&mut self) -> bool {
-        self.init.as_mut().map_or(true, CodexInitState::begin_flush)
+        self.init.as_mut().is_none_or(CodexInitState::begin_flush)
     }
 
     pub(super) fn remember_protocol_error(&mut self, message: &str) {
