@@ -6673,11 +6673,11 @@ fn is_ascii_word_boundary(bytes: &[u8], start: usize, len: usize) -> bool {
     let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     start
         .checked_sub(1)
-        .map_or(true, |index| !is_word(bytes[index]))
+        .is_none_or(|index| !is_word(bytes[index]))
         && bytes
             .get(start + len)
             .copied()
-            .map_or(true, |byte| !is_word(byte))
+            .is_none_or(|byte| !is_word(byte))
 }
 
 fn bearer_secret_range(raw: &str, marker_end: usize) -> Option<(usize, usize)> {

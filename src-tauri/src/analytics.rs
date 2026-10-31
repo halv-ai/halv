@@ -692,7 +692,7 @@ impl AnalyticsManager {
             event.at.saturating_add(PENDING_RETENTION_SECONDS) >= now
                 && event
                     .day
-                    .map_or(true, |day| day.saturating_add(USAGE_DAYS_BACK) >= today)
+                    .is_none_or(|day| day.saturating_add(USAGE_DAYS_BACK) >= today)
         });
         next.prune_v2_keys(now);
         if next != *queue {

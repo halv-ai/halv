@@ -283,7 +283,7 @@ pub(crate) fn seal(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<Vec<u8>, Str
     let cipher = ChaCha20Poly1305::new(key.into());
     let nonce_bytes = rand::random::<[u8; NONCE_LEN]>();
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
+        .encrypt(&Nonce::from(nonce_bytes), plaintext)
         .map_err(|_| "Failed to seal the secret".to_string())?;
     let mut sealed = Vec::with_capacity(FILE_MAGIC.len() + NONCE_LEN + ciphertext.len());
     sealed.extend_from_slice(FILE_MAGIC);
@@ -298,10 +298,11 @@ pub(crate) fn open(key: &[u8; KEY_LEN], sealed: &[u8]) -> Result<Vec<u8>, String
     if sealed.len() < header_len || &sealed[..FILE_MAGIC.len()] != FILE_MAGIC {
         return Err("The sealed secret has an unknown format".to_string());
     }
-    let nonce = Nonce::from_slice(&sealed[FILE_MAGIC.len()..header_len]);
+    let nonce = Nonce::try_from(&sealed[FILE_MAGIC.len()..header_len])
+        .map_err(|_| "The sealed secret has an unknown format".to_string())?;
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
-        .decrypt(nonce, &sealed[header_len..])
+        .decrypt(&nonce, &sealed[header_len..])
         .map_err(|_| "The sealed secret does not match its key".to_string())
 }
 
@@ -446,6 +447,27 @@ mod tests {
 
         let opened = open(&key, &sealed).expect("open should succeed");
         assert_eq!(opened, secret.as_bytes());
+    }
+
+    // The blob was sealed by `seal` with chacha20poly1305 0.10.1, the version
+    // before the bump, with key 00..1f and nonce a0..ab. Sealed files that
+    // Windows users already have on disk must keep opening.
+    #[test]
+    fn open_reads_a_file_sealed_by_chacha20poly1305_0_10() {
+        const SEALED_HEX: &str = "48414c5653463031a0a1a2a3a4a5a6a7a8a9aaab64ca14296d95a7cc\
+                                  cc6a97348f9f9e89f82af3c972ef3e6363765a749b6cf2b6e6a5b68ff0";
+        let sealed: Vec<u8> = (0..SEALED_HEX.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&SEALED_HEX[index..index + 2], 16).unwrap())
+            .collect();
+        let key: [u8; KEY_LEN] = std::array::from_fn(|index| index as u8);
+
+        let opened = open(&key, &sealed).expect("open should read the old format");
+        assert_eq!(opened, b"halv sealed secret v1");
+
+        let mut wrong_key = key;
+        wrong_key[31] ^= 0x01;
+        assert!(open(&wrong_key, &sealed).is_err());
     }
 
     #[test]

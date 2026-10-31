@@ -3295,7 +3295,7 @@ fn plan_window_shape_is_unknown(window: &CodexRateLimitWindow) -> bool {
         && window
             .window_label
             .as_deref()
-            .map_or(true, |label| label.trim().is_empty())
+            .is_none_or(|label| label.trim().is_empty())
 }
 
 fn normalize_plan_window_label(label: &str) -> String {
