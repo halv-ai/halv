@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const label = "Share anonymous usage events";
+const label = "Share pseudonymous usage events";
 
 async function savedPreference(page: Page) {
   return page.evaluate(async () => {
@@ -9,7 +9,7 @@ async function savedPreference(page: Page) {
   });
 }
 
-test("welcome discloses anonymous analytics and saves the choice", async ({
+test("welcome discloses pseudonymous analytics and saves the choice", async ({
   page,
 }, testInfo) => {
   await page.goto("/ux-audit.html?state=welcome");
@@ -74,7 +74,7 @@ test("a failed save keeps the actual preference and can be retried", async ({
   });
   await checkbox.click();
   await expect(page.getByRole("alert")).toContainText(
-    "Could not save the anonymous usage preference: disk full",
+    "Could not save the pseudonymous usage preference: disk full",
   );
   await expect(checkbox).toBeChecked();
   expect(await savedPreference(page)).toBe(true);

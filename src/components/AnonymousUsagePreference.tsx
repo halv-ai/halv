@@ -343,10 +343,10 @@ function ConsentError({
     <div className="space-y-1 text-xs">
       <p className="text-danger" role="alert">
         {preference.consent === null
-          ? t("Could not load the anonymous usage preference: {error}", {
+          ? t("Could not load the pseudonymous usage preference: {error}", {
               error: preference.error,
             })
-          : t("Could not save the anonymous usage preference: {error}", {
+          : t("Could not save the pseudonymous usage preference: {error}", {
               error: preference.error,
             })}
       </p>
@@ -539,7 +539,7 @@ export function ConsentCardView({
           </h2>
           <p className="mt-1 leading-5 text-content-secondary">
             {t(
-              "Halv sends anonymous usage events only if you say yes. They help us fix the steps where people get stuck, find crashes, and count what Halv saves.",
+              "Halv sends pseudonymous usage events only if you say yes. They help us fix the steps where people get stuck, find crashes, and count what Halv saves.",
             )}
           </p>
         </div>
@@ -561,12 +561,12 @@ export function ConsentCardView({
           onChange={(event) => onAnswer(event.target.checked ? "on" : "off")}
           type="checkbox"
         />
-        {t("Share anonymous usage events")}
+        {t("Share pseudonymous usage events")}
       </label>
       {description ? (
         <p className="leading-5" id={descriptionId}>
           {t(
-            "Anonymous usage events help Halv fix the steps where people get stuck, find crashes, and count what it saves.",
+            "Pseudonymous usage events help Halv fix the steps where people get stuck, find crashes, and count what it saves.",
           )}
         </p>
       ) : null}
