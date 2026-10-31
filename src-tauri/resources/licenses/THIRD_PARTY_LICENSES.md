@@ -33,7 +33,7 @@ To make this file again, run `pnpm licenses:collect`.
 - npm packages: 121
 - Entries with a standard SPDX text: 37
 - Entries without license text (exceptions): 0
-- License texts: 387
+- License texts: 388
 
 ## Rust crates
 
@@ -2790,7 +2790,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/tauri-apps/plugins-workspace
 - License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-59899c6091b5](#t-59899c6091b5) (`LICENSE_APACHE-2.0`), [t-89ff9689dcf9](#t-89ff9689dcf9) (`LICENSE_MIT`)
 
-### tauri-plugin-notification 2.7.0
+### tauri-plugin-notification 2.8.0
 
 - License: Apache-2.0 OR MIT
 - Source: https://github.com/tauri-apps/plugins-workspace
@@ -3812,31 +3812,31 @@ To make this file again, run `pnpm licenses:collect`.
 
 ## npm packages
 
-### @tauri-apps/api 2.11.1
+### @tauri-apps/api 2.12.4
 
 - License: Apache-2.0 OR MIT
 - Source: https://github.com/tauri-apps/tauri
-- License texts: [t-59899c6091b5](#t-59899c6091b5) (`LICENSE_APACHE-2.0`), [t-89ff9689dcf9](#t-89ff9689dcf9) (`LICENSE_MIT`)
+- License texts: [t-59899c6091b5](#t-59899c6091b5) (`LICENSE-APACHE-2.0`), [t-89ff9689dcf9](#t-89ff9689dcf9) (`LICENSE-MIT`), [t-7c667b0cf986](#t-7c667b0cf986) (`LICENSE.spdx`)
 
-### @tauri-apps/plugin-dialog 2.7.1
-
-- License: MIT OR Apache-2.0
-- Source: https://github.com/tauri-apps/plugins-workspace
-- License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-c274f80372d9](#t-c274f80372d9) (standard SPDX text: Apache-2.0)
-
-### @tauri-apps/plugin-notification 2.3.3
+### @tauri-apps/plugin-dialog 2.8.4
 
 - License: MIT OR Apache-2.0
 - Source: https://github.com/tauri-apps/plugins-workspace
 - License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-c274f80372d9](#t-c274f80372d9) (standard SPDX text: Apache-2.0)
 
-### @tauri-apps/plugin-process 2.3.1
+### @tauri-apps/plugin-notification 2.8.0
 
 - License: MIT OR Apache-2.0
 - Source: https://github.com/tauri-apps/plugins-workspace
 - License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-c274f80372d9](#t-c274f80372d9) (standard SPDX text: Apache-2.0)
 
-### @tauri-apps/plugin-updater 2.10.1
+### @tauri-apps/plugin-process 2.4.0
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/tauri-apps/plugins-workspace
+- License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-c274f80372d9](#t-c274f80372d9) (standard SPDX text: Apache-2.0)
+
+### @tauri-apps/plugin-updater 2.14.1
 
 - License: MIT OR Apache-2.0
 - Source: https://github.com/tauri-apps/plugins-workspace
@@ -14724,6 +14724,31 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### t-7c667b0cf986
+
+```text
+SPDXVersion: SPDX-2.1
+DataLicense: CC0-1.0
+PackageName: tauri
+DataFormat: SPDXRef-1
+PackageSupplier: Organization: The Tauri Programme in the Commons Conservancy
+PackageHomePage: https://tauri.app
+PackageLicenseDeclared: Apache-2.0
+PackageLicenseDeclared: MIT
+PackageCopyrightText: 2019-2025, The Tauri Programme in the Commons Conservancy
+PackageSummary: <text>Tauri is a rust project that enables developers to make secure
+and small desktop applications using a web frontend.
+                </text>
+PackageComment: <text>The package includes the following libraries; see
+Relationship information.
+                </text>
+Created: 2019-05-20T09:00:00Z
+PackageDownloadLocation: git://github.com/tauri-apps/tauri
+PackageDownloadLocation: git+https://github.com/tauri-apps/tauri.git
+PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
+Creator: Person: Daniel Thompson-Yvetot
 ```
 
 ### t-7cb9ce0134f3
