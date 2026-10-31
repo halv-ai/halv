@@ -29,11 +29,11 @@ components.
 
 To make this file again, run `pnpm licenses:collect`.
 
-- Rust crates: 614
+- Rust crates: 618
 - npm packages: 121
 - Entries with a standard SPDX text: 37
 - Entries without license text (exceptions): 0
-- License texts: 373
+- License texts: 376
 
 ## Rust crates
 
@@ -394,6 +394,12 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/RustCrypto/stream-ciphers
 - License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-282b5e566e85](#t-282b5e566e85) (`LICENSE-MIT`)
 
+### chacha20 0.10.2
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/RustCrypto/stream-ciphers
+- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-1038b7737a0a](#t-1038b7737a0a) (`LICENSE-MIT`)
+
 ### chacha20poly1305 0.10.1
 
 - License: Apache-2.0 OR MIT
@@ -501,6 +507,12 @@ To make this file again, run `pnpm licenses:collect`.
 - License: MIT OR Apache-2.0
 - Source: https://github.com/RustCrypto/utils
 - License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-6334e52844d6](#t-6334e52844d6) (`LICENSE-MIT`)
+
+### cpufeatures 0.3.1
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/RustCrypto/utils
+- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-ea753cf1e3ec](#t-ea753cf1e3ec) (`LICENSE-MIT`)
 
 ### crc32fast 1.5.0
 
@@ -2047,6 +2059,12 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/rust-random/rand
 - License texts: [t-2411d70acb18](#t-2411d70acb18) (`COPYRIGHT`), [t-6508cf9942b4](#t-6508cf9942b4) (`LICENSE-APACHE`), [t-cc367a7134c2](#t-cc367a7134c2) (`LICENSE-MIT`)
 
+### rand 0.10.3
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/rust-random/rand
+- License texts: [t-2411d70acb18](#t-2411d70acb18) (`COPYRIGHT`), [t-6508cf9942b4](#t-6508cf9942b4) (`LICENSE-APACHE`), [t-cc367a7134c2](#t-cc367a7134c2) (`LICENSE-MIT`)
+
 ### rand_chacha 0.9.0
 
 - License: MIT OR Apache-2.0
@@ -2064,6 +2082,12 @@ To make this file again, run `pnpm licenses:collect`.
 - License: MIT OR Apache-2.0
 - Source: https://github.com/rust-random/rand
 - License texts: [t-2411d70acb18](#t-2411d70acb18) (`COPYRIGHT`), [t-60fd4b5e1281](#t-60fd4b5e1281) (`LICENSE-APACHE`), [t-cc367a7134c2](#t-cc367a7134c2) (`LICENSE-MIT`)
+
+### rand_core 0.10.1
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/rust-random/rand_core
+- License texts: [t-c9027c55c930](#t-c9027c55c930) (`COPYRIGHT`), [t-60fd4b5e1281](#t-60fd4b5e1281) (`LICENSE-APACHE`), [t-704f0e5f1c84](#t-704f0e5f1c84) (`LICENSE-MIT`)
 
 ### raw-window-handle 0.6.2
 
@@ -2675,7 +2699,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/tauri-apps/plugins-workspace
 - License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-59899c6091b5](#t-59899c6091b5) (`LICENSE_APACHE-2.0`), [t-89ff9689dcf9](#t-89ff9689dcf9) (`LICENSE_MIT`)
 
-### tauri-plugin-notification 2.7.0
+### tauri-plugin-notification 2.8.0
 
 - License: Apache-2.0 OR MIT
 - Source: https://github.com/tauri-apps/plugins-workspace
@@ -13086,6 +13110,36 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+### t-704f0e5f1c84
+
+```text
+Copyright (c) 2018-2026 The Rand Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### t-71366a4092ad
 
 ```text
@@ -23436,6 +23490,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+### t-c9027c55c930
+
+```text
+Copyrights in the Rand project are retained by their contributors. No
+copyright assignment is required to contribute to the Rand project.
+
+For full authorship information, see the version control history.
+
+Except as otherwise noted (below and/or in individual files), Rand is
+licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
+<http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+<LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
+```
+
 ### t-c9067b1cc20b
 
 ```text
@@ -26892,6 +26960,36 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
 CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
 TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
+### t-ea753cf1e3ec
+
+```text
+Copyright (c) 2020-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 ### t-ea8df489e83b
