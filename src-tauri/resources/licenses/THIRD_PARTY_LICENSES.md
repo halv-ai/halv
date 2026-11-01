@@ -2783,7 +2783,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/unicode-org/icu4x
 - License texts: [t-cde87abe221f](#t-cde87abe221f) (`LICENSE`)
 
-### tokio 1.52.3
+### tokio 1.54.1
 
 - License: MIT
 - Source: https://github.com/tokio-rs/tokio
@@ -3185,7 +3185,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/rustls/webpki-roots
 - License texts: [t-d30183ec6610](#t-d30183ec6610) (`LICENSE`)
 
-### webpki-roots 1.0.8
+### webpki-roots 1.0.11
 
 - License: CDLA-Permissive-2.0
 - Source: https://github.com/rustls/webpki-roots
