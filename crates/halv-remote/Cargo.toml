@@ -36,7 +36,7 @@ ciborium = "0.2.2"
 ed25519-dalek = "2.2.0"
 futures-util = { version = "0.3.32", default-features = false, features = ["sink", "std"], optional = true }
 getrandom = "0.3.4"
-hkdf = "0.12.4"
+hkdf = "0.13.0"
 httparse = { version = "1.10.1", optional = true }
 rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
