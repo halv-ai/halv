@@ -29,11 +29,11 @@ components.
 
 To make this file again, run `pnpm licenses:collect`.
 
-- Rust crates: 624
+- Rust crates: 625
 - npm packages: 121
 - Entries with a standard SPDX text: 37
 - Entries without license text (exceptions): 0
-- License texts: 388
+- License texts: 386
 
 ## Rust crates
 
@@ -97,12 +97,6 @@ To make this file again, run `pnpm licenses:collect`.
 - License: MIT OR Apache-2.0
 - Source: https://github.com/dtolnay/anyhow
 - License texts: [t-95bd3988beee](#t-95bd3988beee) (`LICENSE-APACHE`), [t-30fefc3a7d6a](#t-30fefc3a7d6a) (`LICENSE-MIT`)
-
-### arbitrary 1.4.2
-
-- License: MIT OR Apache-2.0
-- Source: https://github.com/rust-fuzz/arbitrary/
-- License texts: [t-769f80b5bcb4](#t-769f80b5bcb4) (`LICENSE-APACHE`), [t-66a2ea9ed607](#t-66a2ea9ed607) (`LICENSE-MIT`)
 
 ### async-broadcast 0.7.2
 
@@ -394,6 +388,12 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/katharostech/cfg_aliases
 - License texts: [t-48513346d335](#t-48513346d335) (`LICENSE`), [t-bc56efd19e4d](#t-bc56efd19e4d) (`NOTICES.md`)
 
+### cfg_aliases 0.2.1
+
+- License: MIT
+- Source: https://github.com/katharostech/cfg_aliases
+- License texts: [t-48513346d335](#t-48513346d335) (`LICENSE`), [t-bc56efd19e4d](#t-bc56efd19e4d) (`NOTICES.md`)
+
 ### chacha20 0.9.1
 
 - License: Apache-2.0 OR MIT
@@ -657,12 +657,6 @@ To make this file again, run `pnpm licenses:collect`.
 - License: MIT OR Apache-2.0
 - Source: https://github.com/jhpratt/deranged
 - License texts: [t-12c71f5a92a2](#t-12c71f5a92a2) (`LICENSE-Apache`), [t-1b66e3be6894](#t-1b66e3be6894) (`LICENSE-MIT`)
-
-### derive_arbitrary 1.4.2
-
-- License: MIT OR Apache-2.0
-- Source: https://github.com/rust-fuzz/arbitrary
-- License texts: [t-769f80b5bcb4](#t-769f80b5bcb4) (`LICENSE-APACHE`), [t-66a2ea9ed607](#t-66a2ea9ed607) (`LICENSE-MIT`)
 
 ### derive_more 2.1.1
 
@@ -1654,6 +1648,12 @@ To make this file again, run `pnpm licenses:collect`.
 - License texts: [t-42d8a095dbff](#t-42d8a095dbff) (`LICENSE-MIT`)
 
 ### nix 0.28.0
+
+- License: MIT
+- Source: https://github.com/nix-rust/nix
+- License texts: [t-b9b039b5058c](#t-b9b039b5058c) (`LICENSE`)
+
+### nix 0.31.3
 
 - License: MIT
 - Source: https://github.com/nix-rust/nix
@@ -2814,7 +2814,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/tauri-apps/plugins-workspace
 - License texts: [t-eb8a6c846304](#t-eb8a6c846304) (`LICENSE.spdx`), [t-59899c6091b5](#t-59899c6091b5) (`LICENSE_APACHE-2.0`), [t-b7f455413bfe](#t-b7f455413bfe) (`LICENSE_MIT`)
 
-### tauri-plugin-updater 2.14.0
+### tauri-plugin-updater 2.14.1
 
 - License: Apache-2.0 OR MIT
 - Source: https://github.com/tauri-apps/plugins-workspace
@@ -3078,6 +3078,12 @@ To make this file again, run `pnpm licenses:collect`.
 - License: MIT OR Apache-2.0
 - Source: https://github.com/snapview/tungstenite-rs
 - License texts: [t-769f80b5bcb4](#t-769f80b5bcb4) (`LICENSE-APACHE`), [t-a69edb2155ca](#t-a69edb2155ca) (`LICENSE-MIT`)
+
+### typed-path 0.13.0
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/chipsenkbeil/typed-path
+- License texts: [t-95bd3988beee](#t-95bd3988beee) (`LICENSE-APACHE`), [t-30fefc3a7d6a](#t-30fefc3a7d6a) (`LICENSE-MIT`)
 
 ### typeid 1.0.3
 
@@ -3774,11 +3780,11 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/unicode-org/icu4x
 - License texts: [t-cde87abe221f](#t-cde87abe221f) (`LICENSE`)
 
-### zip 4.6.1
+### zip 9.2.1
 
 - License: MIT
-- Source: https://github.com/zip-rs/zip2.git
-- License texts: [t-04dc52136d82](#t-04dc52136d82) (`LICENSE`)
+- Source: https://github.com/zip-rs/zip2
+- License texts: [t-6ac8711fb340](#t-6ac8711fb340) (`LICENSE`)
 
 ### zmij 1.0.21
 
@@ -4598,35 +4604,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-```
-
-### t-04dc52136d82
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2014 Mathijs van de Nes
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-Some files in the "tests/data" subdirectory of this repository are under other
-licences; see files named LICENSE.*.txt for details.
 ```
 
 ### t-055a17110636
@@ -11542,38 +11519,6 @@ You may use this code under the terms of either license.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
-```
-
-### t-66a2ea9ed607
-
-```text
-MIT License
-
-Copyright (c) 2019 Manish Goregaokar
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 ```
 
 ### t-66b593f9d328
