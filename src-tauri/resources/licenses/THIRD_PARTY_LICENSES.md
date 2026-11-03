@@ -29,11 +29,11 @@ components.
 
 To make this file again, run `pnpm licenses:collect`.
 
-- Rust crates: 625
+- Rust crates: 629
 - npm packages: 121
 - Entries with a standard SPDX text: 37
 - Entries without license text (exceptions): 0
-- License texts: 386
+- License texts: 387
 
 ## Rust crates
 
@@ -610,6 +610,12 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek
 - License texts: [t-098f83896216](#t-098f83896216) (`LICENSE`)
 
+### curve25519-dalek 5.0.0
+
+- License: BSD-3-Clause
+- Source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek
+- License texts: [t-db7e563b03fa](#t-db7e563b03fa) (`LICENSE`)
+
 ### curve25519-dalek-derive 0.1.1
 
 - License: MIT OR Apache-2.0
@@ -769,13 +775,13 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/dtolnay/dyn-clone
 - License texts: [t-95bd3988beee](#t-95bd3988beee) (`LICENSE-APACHE`), [t-30fefc3a7d6a](#t-30fefc3a7d6a) (`LICENSE-MIT`)
 
-### ed25519 2.2.3
+### ed25519 3.0.0
 
 - License: Apache-2.0 OR MIT
-- Source: https://github.com/RustCrypto/signatures/tree/master/ed25519
-- License texts: [t-590ef014e22b](#t-590ef014e22b) (`LICENSE-APACHE`), [t-7d9f551458e8](#t-7d9f551458e8) (`LICENSE-MIT`)
+- Source: https://github.com/RustCrypto/signatures
+- License texts: [t-590ef014e22b](#t-590ef014e22b) (`LICENSE-APACHE`), [t-44280199f723](#t-44280199f723) (`LICENSE-MIT`)
 
-### ed25519-dalek 2.2.0
+### ed25519-dalek 3.0.0
 
 - License: BSD-3-Clause
 - Source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek
@@ -866,6 +872,12 @@ To make this file again, run `pnpm licenses:collect`.
 - License texts: [t-59899c6091b5](#t-59899c6091b5) (`LICENSE-APACHE`), [t-77949ead506e](#t-77949ead506e) (`LICENSE-MIT`)
 
 ### fiat-crypto 0.2.9
+
+- License: MIT OR Apache-2.0 OR BSD-1-Clause
+- Source: https://github.com/mit-plv/fiat-crypto
+- License texts: [t-d9b4bc525768](#t-d9b4bc525768) (`COPYRIGHT`), [t-f1954d2b51ee](#t-f1954d2b51ee) (`LICENSE-APACHE`), [t-cb320ccefaa5](#t-cb320ccefaa5) (`LICENSE-BSD-1`), [t-5abb4b606ff4](#t-5abb4b606ff4) (`LICENSE-MIT`)
+
+### fiat-crypto 0.3.0
 
 - License: MIT OR Apache-2.0 OR BSD-1-Clause
 - Source: https://github.com/mit-plv/fiat-crypto
@@ -1183,7 +1195,19 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/RustCrypto/KDFs/
 - License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-2ab57d98da83](#t-2ab57d98da83) (`LICENSE-MIT`)
 
+### hkdf 0.13.0
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/RustCrypto/KDFs/
+- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-2ab57d98da83](#t-2ab57d98da83) (`LICENSE-MIT`)
+
 ### hmac 0.12.1
+
+- License: MIT OR Apache-2.0
+- Source: https://github.com/RustCrypto/MACs
+- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-9c5127ab88e8](#t-9c5127ab88e8) (`LICENSE-MIT`)
+
+### hmac 0.13.0
 
 - License: MIT OR Apache-2.0
 - Source: https://github.com/RustCrypto/MACs
@@ -2531,11 +2555,11 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/vorner/signal-hook
 - License texts: [t-769f80b5bcb4](#t-769f80b5bcb4) (`LICENSE-APACHE`), [t-aaac889d0a4a](#t-aaac889d0a4a) (`LICENSE-MIT`)
 
-### signature 2.2.0
+### signature 3.0.0
 
 - License: Apache-2.0 OR MIT
-- Source: https://github.com/RustCrypto/traits/tree/master/signature
-- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-7d9f551458e8](#t-7d9f551458e8) (`LICENSE-MIT`)
+- Source: https://github.com/RustCrypto/traits
+- License texts: [t-59013a5c8d3a](#t-59013a5c8d3a) (`LICENSE-APACHE`), [t-44280199f723](#t-44280199f723) (`LICENSE-MIT`)
 
 ### simd-adler32 0.3.9
 
@@ -8449,6 +8473,36 @@ DEALINGS IN THE SOFTWARE.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+```
+
+### t-44280199f723
+
+```text
+Copyright (c) 2018-2026 RustCrypto Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 ### t-4428cd87371a
@@ -14808,36 +14862,6 @@ The Original Code and all software distributed under the License are distributed
 
 ```text
 Copyright (c) 2019-2020 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### t-7d9f551458e8
-
-```text
-Copyright (c) 2018-2023 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -26381,6 +26405,40 @@ DEALINGS IN THE SOFTWARE.
 
 ```text
 MIT OR Apache-2.0
+```
+
+### t-db7e563b03fa
+
+```text
+Copyright (c) 2016-2021 isis agora lovecruft. All rights reserved.
+Copyright (c) 2016-2021 Henry de Valence. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### t-dd0815108f8e
