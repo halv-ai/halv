@@ -3173,7 +3173,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/tauri-apps/webkit2gtk-rs
 - License texts: [t-2d964b247876](#t-2d964b247876) (`LICENSE`)
 
-### webpki-root-certs 1.0.8
+### webpki-root-certs 1.0.11
 
 - License: CDLA-Permissive-2.0
 - Source: https://github.com/rustls/webpki-roots
