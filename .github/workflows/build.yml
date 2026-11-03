@@ -21,6 +21,13 @@ env:
   LEGACY_RELEASE_REPOSITORY: pedr0v/halv-releases
   RELEASE_NOTES: |
     ## What's new
+    - The consent screens now call usage events pseudonymous instead of anonymous, because each event carries a random install ID. Your saved answer stays the same.
+    - Halv now runs on Tauri 2.12, with newer updater, notification, dialog, deep-link and opener plugins.
+    - Security updates for tokio, webpki-roots and webpki-root-certs, in the app and in its remote protocol library (halv-remote).
+    - The updater no longer uses the zip 4.6.1 library, which had security issues.
+    - Security update for the vite build tool.
+
+    ## 1.0.2
     - Halv asks before it sends a task brief to Halv Cloud for routing. Nothing goes out until you say yes, and you can change the answer in Settings.
     - Cloud handoff is off for now. The Automations panel no longer offers it.
     - Halv Engine now runs Headroom 0.41, built from the public fork at github.com/halv-ai/headroom. Halv Engine stays off by default.
