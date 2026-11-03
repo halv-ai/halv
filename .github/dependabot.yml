@@ -4,10 +4,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 2
+    # Each pending major is its own PR and stays open until its migration
+    # lands. With a limit of 2, the majors alone could fill every slot and
+    # keep the grouped minor/patch PR from opening.
+    open-pull-requests-limit: 10
     groups:
+      # Majors (React, Tailwind, TypeScript, Vite...) need their own
+      # migration, so they come as separate PRs and do not hold back the
+      # minor and patch updates.
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: cargo
     directory: /src-tauri
