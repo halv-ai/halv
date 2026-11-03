@@ -44,11 +44,25 @@ pub struct ResourceUsageProbe {
 
 impl ResourceUsageProbe {
     fn sample(&self) -> Vec<ProcessSample> {
+        self.sample_with(System::new)
+    }
+
+    /// Samples with `new_system` building the `System` the first time. If
+    /// it fails, the sample is empty and the next one tries again.
+    fn sample_with(
+        &self,
+        new_system: impl FnOnce() -> Result<System, sysinfo::Error>,
+    ) -> Vec<ProcessSample> {
         let mut guard = match self.system.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let system = guard.get_or_insert_with(System::new);
+        if guard.is_none() {
+            *guard = new_system().ok();
+        }
+        let Some(system) = guard.as_mut() else {
+            return Vec::new();
+        };
         system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
@@ -189,6 +203,22 @@ mod tests {
                 total_bytes: 350,
             }
         );
+    }
+
+    #[test]
+    fn empty_sample_when_the_system_cannot_be_built_then_retries() {
+        let probe = ResourceUsageProbe::default();
+        let failed = probe.sample_with(|| Err(sysinfo::Error::Unsupported));
+        assert!(failed.is_empty());
+        assert!(probe.system.lock().unwrap().is_none());
+
+        let mut called = false;
+        let _ = probe.sample_with(|| {
+            called = true;
+            System::new()
+        });
+        assert!(called);
+        assert!(probe.system.lock().unwrap().is_some());
     }
 
     #[test]

@@ -5,7 +5,7 @@ description = "Halv desktop app"
 authors = ["Halv"]
 edition = "2021"
 license = "Apache-2.0"
-# The highest rust-version among the dependencies (sysinfo 0.39.6 asks for
+# The highest rust-version among the dependencies (sysinfo 0.40.1 asks for
 # 1.95; the Tauri 2.12 crates ask for 1.90).
 rust-version = "1.95"
 
