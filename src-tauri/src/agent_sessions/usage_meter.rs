@@ -303,7 +303,7 @@ impl CodexRolloutSource {
         agent_kind: &str,
         out: &mut PricedUsage,
     ) -> bool {
-        if self.path.as_ref().map_or(true, |path| !path.is_file()) {
+        if self.path.as_ref().is_none_or(|path| !path.is_file()) {
             self.path = find_rollout(
                 sessions_root,
                 &format!("-{session_id}.jsonl"),

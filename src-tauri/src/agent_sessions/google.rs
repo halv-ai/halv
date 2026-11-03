@@ -560,7 +560,7 @@ pub(super) fn gemini_project_hash(cwd: &Path) -> Option<String> {
     let cwd = cwd.to_str()?;
     let mut hasher = Sha256::new();
     hasher.update(cwd.as_bytes());
-    Some(format!("{:x}", hasher.finalize()))
+    Some(crate::lower_hex::lower_hex(&hasher.finalize()))
 }
 
 fn gemini_runtime_directory() -> Option<PathBuf> {
@@ -1126,6 +1126,16 @@ fn usage_delta(total: &TurnUsage, previous: &TurnUsage) -> TurnUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Gemini CLI names its project folders by this hash, so the text must
+    // stay the same across sha2 versions.
+    #[test]
+    fn gemini_project_hash_is_the_lowercase_sha256_of_the_path() {
+        assert_eq!(
+            gemini_project_hash(Path::new("/Users/halv/project")).as_deref(),
+            Some("9ab77df2d34ed610a6324a8a421f3cd172dc555cfcdeebf0f095f5d36650cf8f")
+        );
+    }
 
     struct TestDirectory {
         path: PathBuf,

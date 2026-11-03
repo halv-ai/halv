@@ -840,7 +840,7 @@ async fn monitor(
             }
             _ = tick.tick() => {
                 ticks = ticks.wrapping_add(1);
-                if ticks % PANE_REFRESH_TICKS == 0 {
+                if ticks.is_multiple_of(PANE_REFRESH_TICKS) {
                     backend.notify_panes();
                 }
             }

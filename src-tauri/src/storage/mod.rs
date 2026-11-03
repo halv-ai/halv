@@ -4403,7 +4403,7 @@ impl Storage {
         let valid_postcondition = matches!(
             (after_exists, after_sha256),
             (Some(false), None) | (Some(true), Some(_))
-        ) && after_sha256.map_or(true, |digest| {
+        ) && after_sha256.is_none_or(|digest| {
             digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
         });
         if !valid_postcondition {
@@ -8633,6 +8633,41 @@ mod tests {
 
     fn test_db_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("halv-{name}-{}.sqlite3", new_uuid_v4()))
+    }
+
+    // rusqlite 0.40 only converts u64 and usize with its fallible_uint
+    // feature. The conversions must work as in rusqlite 0.32: an INTEGER in
+    // the u64 range reads as u64, a negative one fails, and a usize binds as
+    // an INTEGER.
+    #[test]
+    fn unsigned_integers_convert_like_rusqlite_0_32() {
+        let connection = Connection::open_in_memory().expect("database should open");
+        connection
+            .execute_batch("CREATE TABLE numbers (value INTEGER NOT NULL)")
+            .expect("table should create");
+        let index: usize = 7;
+        connection
+            .execute("INSERT INTO numbers (value) VALUES (?1)", params![index])
+            .expect("usize should bind");
+        connection
+            .execute(
+                "INSERT INTO numbers (value) VALUES (?1), (-1)",
+                params![i64::MAX],
+            )
+            .expect("rows should insert");
+
+        let read = |sql: &str| connection.query_row(sql, [], |row| row.get::<_, u64>(0));
+        assert_eq!(
+            read("SELECT value FROM numbers WHERE rowid = 1").unwrap(),
+            7
+        );
+        assert_eq!(
+            read("SELECT value FROM numbers WHERE rowid = 2").unwrap(),
+            i64::MAX as u64
+        );
+        assert!(read("SELECT value FROM numbers WHERE rowid = 3").is_err());
+        assert_eq!(read("SELECT COUNT(*) FROM numbers").unwrap(), 3);
+        assert!(rusqlite::ToSql::to_sql(&u64::MAX).is_err());
     }
 
     #[test]

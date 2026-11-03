@@ -313,7 +313,7 @@ fn approval_matches(
 }
 
 fn sha256_hex(raw: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(raw))
+    crate::lower_hex::lower_hex(&Sha256::digest(raw))
 }
 
 fn list_environments(

@@ -5,7 +5,9 @@ description = "Halv desktop app"
 authors = ["Halv"]
 edition = "2021"
 license = "Apache-2.0"
-rust-version = "1.77"
+# The highest rust-version among the dependencies (sysinfo 0.39.6 asks for
+# 1.95; the Tauri 2.12 crates ask for 1.90).
+rust-version = "1.95"
 
 [lib]
 name = "halv_lib"
@@ -15,9 +17,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.1"
 # The sealed secret file on Windows (src/secret_store.rs). snow already builds it.
-chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 futures-util = "0.3"
@@ -33,25 +35,27 @@ keyring = { version = "3.6.3", default-features = false, features = [
 ] }
 portable-pty = "0.9.0"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
-rand = "0.9.4"
+rand = "0.10.3"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+# fallible_uint keeps the u64 and usize conversions of rusqlite 0.32.
+rusqlite = { version = "0.40.2", features = ["bundled", "fallible_uint"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tar = "0.4"
 tauri = { version = "2", features = ["image-png", "tray-icon", "macos-private-api", "unstable"] }
 # Opens halv://welcome?d=<download_id> from the Halv site (ADR 0021).
-tauri-plugin-deep-link = "2.4.10"
-tauri-plugin-dialog = "2.0.0-rc.8"
-tauri-plugin-notification = "2.0.0-rc.5"
+# 2.6.3 or later: 2.6.0 to 2.6.2 do not build on Linux with rust-ini 0.21.3.
+tauri-plugin-deep-link = "2.6.3"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-notification = "2.8.0"
 tauri-plugin-opener = "2.5.4"
-tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.4.0"
+tauri-plugin-updater = "2.14.0"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
-tokio-tungstenite = "0.27"
-toml = "0.9.12"
+tokio-tungstenite = "0.30"
+toml = "1.1.2"
 url = "2.5.8"
 zeroize = "1.8.2"
 
@@ -72,10 +76,10 @@ block2 = "0.6"
 objc2 = "0.6"
 
 # Sends a halv:// link from a second launch to the running app (ADR 0021).
-# macOS gives links to the running app without it. The 2.4 line keeps
-# tauri 2.11 and tauri-plugin-deep-link 2.4.
+# macOS gives links to the running app without it. The 2.5 line uses
+# tauri 2.12 and tauri-plugin-deep-link 2.6.
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
-tauri-plugin-single-instance = { version = "~2.4.5", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "~2.5.4", features = ["deep-link"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

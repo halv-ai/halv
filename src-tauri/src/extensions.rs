@@ -2540,7 +2540,7 @@ fn validate_mcp_elicitation_schema(schema: &Value) -> ExtensionResult<()> {
         if required.len() > properties.len()
             || required.iter().any(|name| {
                 name.as_str()
-                    .map_or(true, |name| !properties.contains_key(name))
+                    .is_none_or(|name| !properties.contains_key(name))
             })
         {
             return Err("MCP elicitation required list was invalid".to_string());
@@ -5074,7 +5074,7 @@ fn discover_codex_plugin_candidates(config: &ExtensionConfig) -> Vec<PluginCandi
                 };
                 let replace = candidates
                     .get(&candidate.id)
-                    .map_or(true, |current| candidate.version > current.version);
+                    .is_none_or(|current| candidate.version > current.version);
                 if replace {
                     candidates.insert(candidate.id.clone(), candidate);
                 }
