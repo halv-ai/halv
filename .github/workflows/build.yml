@@ -105,7 +105,7 @@ jobs:
           rustup default stable
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.0.9
           run_install: false
@@ -412,7 +412,7 @@ jobs:
 
       - name: Setup uv for frozen Headroom
         if: steps.headroom-runtime-cache.outputs.cache-hit != 'true'
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.11.28"
           enable-cache: true
@@ -425,7 +425,7 @@ jobs:
         run: uv python install 3.12.7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.0.9
           run_install: false
