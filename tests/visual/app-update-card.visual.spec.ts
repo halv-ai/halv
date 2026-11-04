@@ -43,7 +43,12 @@ for (const theme of ["dark", "light"] as const) {
       send.y + send.height > box.y;
     expect(overlaps).toBe(false);
     await expect(updateSegment(page)).toHaveText("Update ready");
-    await expect(card).toHaveScreenshot(`app-update-card-ready-${theme}.png`);
+    // With the same layout, Chromium sometimes paints the card content one
+    // device pixel apart (the card top sits at a fractional y): 331 to 496
+    // pixels on the bullets and the Restart now button.
+    await expect(card).toHaveScreenshot(`app-update-card-ready-${theme}.png`, {
+      maxDiffPixels: 600,
+    });
   });
 
   test(`the download and the blockers step render in ${theme} mode`, async ({ page }) => {

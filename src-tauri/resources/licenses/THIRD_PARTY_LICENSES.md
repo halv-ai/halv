@@ -33,7 +33,7 @@ To make this file again, run `pnpm licenses:collect`.
 - npm packages: 121
 - Entries with a standard SPDX text: 37
 - Entries without license text (exceptions): 0
-- License texts: 387
+- License texts: 388
 
 ## Rust crates
 
@@ -4065,7 +4065,7 @@ To make this file again, run `pnpm licenses:collect`.
 - Source: https://github.com/syntax-tree/hast-util-whitespace
 - License texts: [t-d9c32f07344c](#t-d9c32f07344c) (`license`)
 
-### highlight.js 11.11.1
+### highlight.js 11.12.0
 
 - License: BSD-3-Clause
 - Source: https://github.com/highlightjs/highlight.js

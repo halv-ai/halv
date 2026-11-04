@@ -54,6 +54,9 @@ test("the keyboard moves through the launcher, and Enter on Terminal opens a she
   await openWorkspaceTabsWithShells(page);
   await treeRow(page, "project:2").click();
   await expect(launcher(page)).toBeVisible();
+  // The launcher takes the focus in an effect after the click. Without this
+  // wait, End can reach the project tree first.
+  await expect(launcher(page).locator("[data-launcher-item^='agent:']").first()).toBeFocused();
   await page.keyboard.press("End");
   await expect(launcherItem(page, "text")).toBeFocused();
   await page.keyboard.press("ArrowUp");
