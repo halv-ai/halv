@@ -230,7 +230,7 @@ fn live_cwd(pid: u32) -> Option<PathBuf> {
         return None;
     }
     let pid = Pid::from_u32(pid);
-    let mut system = System::new();
+    let mut system = System::new().ok()?;
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         false,
