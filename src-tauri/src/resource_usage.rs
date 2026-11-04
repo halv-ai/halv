@@ -4,6 +4,10 @@
 //! terminal tree starts at the shell the session spawned. The app tree
 //! starts at this process and skips the terminal trees, so the supervisor,
 //! the sidecars and the webview count once.
+//!
+//! On Linux sysinfo also lists every thread (`/proc/<pid>/task/*`) as a
+//! child of its process, with the process's whole resident memory. Those
+//! entries are skipped, or each thread would count the process again.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -29,11 +33,13 @@ pub struct ResourceUsageSnapshot {
 }
 
 /// One sampled process: its id, its parent and its resident memory.
+/// `is_thread` marks the per-thread entries sysinfo adds on Linux.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProcessSample {
     pub pid: u32,
     pub parent: Option<u32>,
     pub bytes: u64,
+    pub is_thread: bool,
 }
 
 /// Keeps one `System` so each refresh reuses its process table.
@@ -61,6 +67,7 @@ impl ResourceUsageProbe {
                 pid: pid.as_u32(),
                 parent: process.parent().map(|parent| parent.as_u32()),
                 bytes: process.memory(),
+                is_thread: process.thread_kind().is_some(),
             })
             .collect()
     }
@@ -90,7 +97,7 @@ pub(crate) fn snapshot_from_samples(
 ) -> ResourceUsageSnapshot {
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     let mut bytes_of: HashMap<u32, u64> = HashMap::new();
-    for sample in samples {
+    for sample in samples.iter().filter(|sample| !sample.is_thread) {
         bytes_of.insert(sample.pid, sample.bytes);
         if let Some(parent) = sample.parent {
             if parent != sample.pid {
@@ -153,7 +160,21 @@ mod tests {
     use super::*;
 
     fn sample(pid: u32, parent: Option<u32>, bytes: u64) -> ProcessSample {
-        ProcessSample { pid, parent, bytes }
+        ProcessSample {
+            pid,
+            parent,
+            bytes,
+            is_thread: false,
+        }
+    }
+
+    fn thread(tid: u32, owner: u32, bytes: u64) -> ProcessSample {
+        ProcessSample {
+            pid: tid,
+            parent: Some(owner),
+            bytes,
+            is_thread: true,
+        }
     }
 
     #[test]
@@ -202,5 +223,23 @@ mod tests {
         assert_eq!(snapshot.app_bytes, 30);
         assert_eq!(snapshot.terminals[0].bytes, 0);
         assert_eq!(snapshot.total_bytes, 30);
+    }
+
+    #[test]
+    fn skips_thread_entries_that_repeat_the_owner_memory() {
+        // Linux: sysinfo lists threads 101 and 102 of the app and thread 111
+        // of the shell as children carrying the owner's whole RSS.
+        let samples = vec![
+            sample(1, None, 100),
+            thread(101, 1, 100),
+            thread(102, 1, 100),
+            sample(2, Some(1), 50),
+            sample(10, Some(1), 30),
+            thread(111, 10, 30),
+        ];
+        let snapshot = snapshot_from_samples(&samples, 1, &[("a".to_string(), 10)]);
+        assert_eq!(snapshot.app_bytes, 150);
+        assert_eq!(snapshot.terminals[0].bytes, 30);
+        assert_eq!(snapshot.total_bytes, 180);
     }
 }
