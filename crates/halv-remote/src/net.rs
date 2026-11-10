@@ -18,6 +18,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Response;
 use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode as WsCloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
@@ -154,29 +155,55 @@ pub(crate) async fn connect(
 /// Reads a failed upgrade. The texts never hold header values.
 fn classify_error(error: tungstenite::Error) -> ConnectError {
     match error {
-        tungstenite::Error::Http(response) => {
-            let status = response.status().as_u16();
-            let body = response
-                .body()
-                .as_deref()
-                .map(String::from_utf8_lossy)
-                .unwrap_or_default();
-            let retry_after = response
-                .headers()
-                .get("Retry-After")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<u64>().ok())
-                .map(Duration::from_secs);
-            match UpgradeError::from_response(status, &body) {
-                Some(error) => ConnectError::Upgrade { error, retry_after },
-                None => ConnectError::Http(status),
-            }
-        }
+        tungstenite::Error::Http(response) => classify_response(&response),
         tungstenite::Error::Io(error) => ConnectError::Network(error.kind().to_string()),
         tungstenite::Error::Tls(_) => ConnectError::Network("TLS handshake failed".to_owned()),
         tungstenite::Error::Url(_) => ConnectError::InvalidUrl,
         _ => ConnectError::Network("the WebSocket handshake failed".to_owned()),
     }
+}
+
+/// Reads the HTTP answer of a failed upgrade.
+///
+/// The handshake keeps only the body bytes that came in the same read as the headers.
+/// Over TLS, the body of the relay can come in a later record, so the body can be empty or cut.
+/// Then the status alone gives the error:
+/// - A `503` with a cut body is `host_offline`. The relay sends `503` only with this code (section 6.6).
+/// - A `401` with a cut body is `unauthorized`, because the code is not known.
+fn classify_response(response: &Response) -> ConnectError {
+    let status = response.status().as_u16();
+    let body = response
+        .body()
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+    let retry_after = response
+        .headers()
+        .get("Retry-After")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs);
+    match UpgradeError::from_response(status, &body) {
+        Some(error) => ConnectError::Upgrade { error, retry_after },
+        None if status == UpgradeError::HostOffline.status() && body_is_cut(response) => {
+            ConnectError::Upgrade {
+                error: UpgradeError::HostOffline,
+                retry_after,
+            }
+        }
+        None => ConnectError::Http(status),
+    }
+}
+
+/// Returns `true` when the body is shorter than the `Content-Length` of the answer.
+fn body_is_cut(response: &Response) -> bool {
+    let received = response.body().as_ref().map_or(0, Vec::len);
+    response
+        .headers()
+        .get("Content-Length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .is_some_and(|length| received < length)
 }
 
 /// Makes a header value that holds a secret. The `http` crate then hides it in `Debug` output.
@@ -420,6 +447,97 @@ mod tests {
         assert_eq!(
             classify_error(response(500, "{}", None)),
             ConnectError::Http(500)
+        );
+    }
+
+    /// Makes the HTTP answer of a failed upgrade.
+    fn answer(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Response {
+        let mut builder = tungstenite::http::Response::builder().status(status);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(Some(body.to_vec())).unwrap()
+    }
+
+    #[test]
+    fn an_upgrade_error_with_a_cut_body_gets_the_error_of_its_status() {
+        // The handshake keeps only the body bytes that came with the headers.
+        // Over TLS the body of the relay can come later, so the answer has no body or a part of it.
+        for error in [
+            UpgradeError::BadRequest,
+            UpgradeError::Unauthorized,
+            UpgradeError::NotFound,
+            UpgradeError::UpgradeRequired,
+            UpgradeError::RateLimited,
+            UpgradeError::HostOffline,
+        ] {
+            let body = error.body();
+            let length = body.len().to_string();
+            let headers = [("Content-Length", length.as_str()), ("Retry-After", "5")];
+            let expected = ConnectError::Upgrade {
+                error,
+                retry_after: Some(Duration::from_secs(5)),
+            };
+            for cut in [0, 10] {
+                let response = answer(error.status(), &headers, &body.as_bytes()[..cut]);
+                assert_eq!(
+                    classify_response(&response),
+                    expected,
+                    "{error:?} with {cut} bytes of the body"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_complete_503_without_host_offline_stays_an_http_error() {
+        let page = b"<html>Service Unavailable</html>";
+        let length = page.len().to_string();
+        let response = answer(503, &[("Content-Length", length.as_str())], page);
+        assert_eq!(classify_response(&response), ConnectError::Http(503));
+        // Without a Content-Length, the reader cannot know that a body is missing.
+        assert_eq!(
+            classify_response(&answer(503, &[], b"")),
+            ConnectError::Http(503)
+        );
+    }
+
+    /// The relay can send the body of an error after the headers, for example in a later TLS record.
+    #[tokio::test]
+    async fn a_host_offline_body_that_comes_after_the_headers_gives_host_offline() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}/", listener.local_addr().unwrap());
+        let relay = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            let body = UpgradeError::HostOffline.body();
+            let head = format!(
+                "HTTP/1.1 503 Service Unavailable\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\
+                 Retry-After: 5\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            // The client can close the socket before the body comes.
+            let _ = stream.write_all(body.as_bytes());
+        });
+        let result = connect(&url, Vec::new(), Duration::from_secs(5)).await;
+        relay.join().unwrap();
+        assert_eq!(
+            result.err(),
+            Some(ConnectError::Upgrade {
+                error: UpgradeError::HostOffline,
+                retry_after: Some(Duration::from_secs(5)),
+            })
         );
     }
 }
