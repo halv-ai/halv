@@ -401,7 +401,9 @@ mod tests {
             if let Some(retry) = retry {
                 builder = builder.header("Retry-After", retry);
             }
-            tungstenite::Error::Http(builder.body(Some(body.as_bytes().to_vec())).unwrap())
+            tungstenite::Error::Http(Box::new(
+                builder.body(Some(body.as_bytes().to_vec())).unwrap(),
+            ))
         };
         assert_eq!(
             classify_error(response(503, r#"{"code":"host_offline"}"#, Some("5"))),
