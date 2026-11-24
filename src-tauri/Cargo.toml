@@ -34,11 +34,11 @@ keyring = { version = "3.6.3", default-features = false, features = [
     "vendored",
 ] }
 portable-pty = "0.9.0"
-qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+qrcode = { version = "0.15.0", default-features = false, features = ["svg"] }
 rand = "0.10.3"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # fallible_uint keeps the u64 and usize conversions of rusqlite 0.32.
-rusqlite = { version = "0.41.1", features = ["bundled", "fallible_uint"] }
+rusqlite = { version = "0.43.0", features = ["bundled", "fallible_uint"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11.1"
